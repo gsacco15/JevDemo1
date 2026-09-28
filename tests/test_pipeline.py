@@ -97,3 +97,36 @@ def test_stream_endpoint_emits_every_stage():
     assert result["questions"] and result["tournament"]["ids"]
     assert all("judgments" in c for c in result["pool"])
     assert types.count("judged") == result["stats"]["generated"]
+
+
+def _cand(cid, total):
+    from coach.schemas import Candidate
+    c = Candidate(id=cid, text=cid)
+    c.total = total
+    return c
+
+
+def test_dominant_tournament_winner_can_take_best():
+    a, b = _cand("a", 80), _cand("b", 76)
+    ranking.apply_tournament([a, b], {("a", "b"): 0.1})  # Jev strongly prefers b
+    assert b.final > a.final
+
+
+def test_escalation_target_follows_readiness():
+    from coach.schemas import ConversationState, StyleProfile
+    base = dict(stage="ACTIVE_FLIRTING", message_count=6, flirt_level=0.4)
+    ready = ranking.desired_state(ConversationState(**base, escalation_readiness=0.8, date_appropriate=0.8),
+                                  "TEASE", StyleProfile(), Sliders(), {})
+    cold = ranking.desired_state(ConversationState(**base, escalation_readiness=0.05, date_appropriate=0.05),
+                                 "TEASE", StyleProfile(), Sliders(), {})
+    assert ready["escalation"] > cold["escalation"] + 0.2
+
+
+def test_change_topic_is_not_punished_for_asking_a_question():
+    from coach.schemas import Candidate, ConversationState, Judgment
+    c = Candidate(id="x", text="t", features={"words": 8})
+    c.judgments["asks_question"] = Judgment(question_id="asks_question", kind="noul", value=0.95, confidence=1)
+    st = ConversationState(questions_recently_asked_by_user=2, need_question=0.7)
+    d = ranking.desired_state(st, "CHANGE_TOPIC", __import__("coach.schemas", fromlist=["StyleProfile"]).StyleProfile(), Sliders(), {})
+    ranking.score_candidate(c, st, "CHANGE_TOPIC", [], d, ranking.stage_weights(st.stage, {}))
+    assert "question_overload" not in c.penalties

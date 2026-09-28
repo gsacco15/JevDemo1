@@ -26,6 +26,10 @@ REJECT_NOULS = {"manipulative", "insulting", "pickup_line", "invented_info", "re
 DECISION_SCORES = {"relevance", "cringe", "neediness", "sexual"}
 
 
+def human_move(k: str) -> str:
+    return k.replace("_", " ").lower()
+
+
 class CoachError(ValueError):
     pass
 
@@ -176,6 +180,7 @@ async def build_state(mode: str, messages: list[Message], profile: str | None, s
         date_appropriate=round(val("date_appropriate", 0.2), 3),
         conversation_momentum=res["momentum"].choice if "momentum" in res else "neutral",
         last_match_message=last_match,
+        last_speaker=messages[-1].speaker if messages else None,
     )
     if mode == "opener":
         state.stage = "PROFILE_OPENER"
@@ -201,7 +206,9 @@ async def choose_strategy(mode: str, messages, profile, state: ConversationState
         rules.append("number already requested -> no ASK_FOR_NUMBER")
     if state.date_requested and state.stage != "DATE_PLANNING":
         probs["ASK_FOR_DATE"] *= 0.3
-    if state.message_count < 6:
+    # (6) early conversations damp asks - unless she's clearly into it or already talking plans
+    hot = state.flirt_level >= 0.6 and state.escalation_readiness >= 0.4
+    if state.message_count < 6 and not hot and state.match_behavior != "logistics":
         for k in ("ASK_FOR_NUMBER", "ASK_FOR_DATE", "SUGGEST_SPECIFIC_DATE"):
             probs[k] = probs.get(k, 0) * 0.3
         rules.append("early conversation -> damp number/date asks")
@@ -222,12 +229,21 @@ async def choose_strategy(mode: str, messages, profile, state: ConversationState
     probs = {k: v / z for k, v in probs.items()}
     ranked = sorted(probs, key=lambda k: -probs[k])
     chosen = ranked[0]
+    # (3) similar moves pool their votes, so "ask for date" + "suggest a plan" can't lose by splitting
+    for fam in (("ASK_FOR_DATE", "SUGGEST_SPECIFIC_DATE"), ("FLIRT", "ESCALATE_FLIRT")):
+        fam_p = sum(probs.get(k, 0) for k in fam)
+        if chosen not in fam and fam_p > probs[chosen]:
+            chosen = max(fam, key=lambda k: probs.get(k, 0))
+            rules.append(f"{' + '.join(human_move(k) for k in fam)} together outweigh {human_move(ranked[0])}")
+            ranked.remove(chosen)
+            ranked.insert(0, chosen)
+            break
     alts = [s for s in ranked[1:3] if probs[s] > 0.03]
     bold_alt = "ASK_FOR_DATE" if state.date_appropriate >= state.number_appropriate else "ASK_FOR_NUMBER"
-    if mode == "reply" and state.escalation_readiness > 0.45 and bold_alt not in alts and bold_alt != chosen and probs.get(bold_alt, 0) > 0:
+    if mode == "reply" and (state.escalation_readiness > 0.4 or hot) and bold_alt not in alts and bold_alt != chosen and probs.get(bold_alt, 0) > 0:
         alts.append(bold_alt)
     info = {"chosen": chosen, "confidence": round(res.confidence, 3), "source": res.source,
-            "probs": {k: round(probs[k], 3) for k in ranked[:6]}, "rules_applied": rules}
+            "probs": {k: round(probs[k], 3) for k in ranked[:6]}, "rules_applied": rules, "alts": alts}
     return chosen, alts, info
 
 
@@ -367,14 +383,25 @@ async def escalate(cands: list[Candidate], context: dict) -> tuple[int, int]:
 # 5. ranking
 # ---------------------------------------------------------------------------
 
-async def pairwise_probs(finalists: list[Candidate], context: dict, use_judge: bool) -> dict[tuple[str, str], float]:
+async def pairwise_probs(finalists: list[Candidate], context: dict, use_judge: bool,
+                         cached: dict[str, float] | None = None) -> dict[tuple[str, str], float]:
     pairs = [(a, b) for i, a in enumerate(finalists) for b in finalists[i + 1:]]
     if not pairs:
         return {}
+    cached = cached or {}
+    known = {}
+    for a, b in pairs:  # Jev's verdicts don't depend on the sliders, so reuse them when re-ranking
+        if f"{a.id}|{b.id}" in cached:
+            known[(a.id, b.id)] = cached[f"{a.id}|{b.id}"]
+        elif f"{b.id}|{a.id}" in cached:
+            known[(a.id, b.id)] = 1 - cached[f"{b.id}|{a.id}"]
+    pairs = [(a, b) for a, b in pairs if (a.id, b.id) not in known]
+    if not pairs:
+        return known
     items = [EvalItem(f"{a.id}|{b.id}", context | {"candidate_a": a.text, "candidate_b": b.text},
                       {"kind": "pairwise", "a_total": a.total, "b_total": b.total}) for a, b in pairs]
     res = await (judge if use_judge else _local).judge(items, [PAIRWISE_QUESTION])
-    out = {}
+    out = dict(known)
     for (a, b), item in zip(pairs, items):
         j = res[item.key].get("pairwise")
         if j:
@@ -390,11 +417,12 @@ def score_pool(cands, state, strategy, alts, desired, weights, mode):
         c.final, c.pairwise_winrate = c.total, None
 
 
-async def rank(cands, state, strategy, alts, desired, weights, mode, context, sliders: Sliders, use_judge=True):
+async def rank(cands, state, strategy, alts, desired, weights, mode, context, sliders: Sliders, use_judge=True,
+               cached: dict | None = None):
     score_pool(cands, state, strategy, alts, desired, weights, mode)
     alive = sorted([c for c in cands if not c.rejected], key=lambda c: -c.total)
     finalists = alive[: settings.tournament_size]
-    probs = await pairwise_probs(finalists, context, use_judge)
+    probs = await pairwise_probs(finalists, context, use_judge, cached)
     ranking.apply_tournament(finalists, probs)
     finalists.sort(key=lambda c: -c.final)
     picks = ranking.select_diverse(finalists, reserve=[c for c in alive if c.total > 45], bold_slider=sliders.bold)
@@ -467,6 +495,10 @@ def jev_report(cands: list[Candidate], errors_before: int) -> tuple[dict, list[s
 def _load_user(user_id: str) -> tuple[StyleProfile, dict]:
     style, prefs = store.get_user(user_id)
     return StyleProfile(**style) if style else StyleProfile(), prefs or personalization.empty()
+
+
+def _pair_keys(probs: dict) -> dict[str, float]:
+    return {f"{a}|{b}": p for (a, b), p in probs.items()}
 
 
 def _session_payload(req_mode, messages, profile, pronoun, platform, state, strategy_info, alts, cands, sliders):
@@ -589,7 +621,8 @@ async def coach_events(req: CoachRequest, user_id: str):
 
     session_id = uuid.uuid4().hex[:12]
     store.save_session(session_id, user_id, _session_payload(req.mode, messages, profile, req.match_pronoun,
-                                                             req.platform, state, strategy_info, alts, cands, req.sliders))
+                                                             req.platform, state, strategy_info, alts, cands, req.sliders)
+                       | {"pairwise": _pair_keys(probs)})
     t.lap("save")
     stats = {
         "generated": len(cands), "rejected": len(cands) - len(alive), "finalists": len(finalists),
@@ -624,7 +657,7 @@ async def rerank(session_id: str, sliders: Sliders, user_id: str) -> dict:
     desired = ranking.desired_state(state, strategy, style, sliders, prefs)
     weights = ranking.stage_weights(state.stage, prefs, sliders)
     alive, finalists, picks, probs = await rank(cands, state, strategy, alts, desired, weights, sess["mode"], {},
-                                                  sliders, use_judge=False)
+                                                  sliders, use_judge=False, cached=sess.get("pairwise"))
     sess["sliders"] = sliders.model_dump()
     store.save_session(session_id, user_id, sess | {"candidates": [c.model_dump() for c in cands]})
     stats = {"generated": len(cands), "rejected": len(cands) - len(alive), "finalists": len(finalists),
@@ -655,7 +688,9 @@ async def regenerate(session_id: str, sliders: Sliders, user_id: str) -> dict:
     desired = ranking.desired_state(state, strategy, style, sliders, prefs)
     weights = ranking.stage_weights(state.stage, prefs, sliders)
     ctx = render_context(mode, messages, sess["profile"], state, style, strategy)
-    alive, finalists, picks, probs = await rank(cands, state, strategy, alts, desired, weights, mode, ctx, sliders)
+    alive, finalists, picks, probs = await rank(cands, state, strategy, alts, desired, weights, mode, ctx, sliders,
+                                                cached=sess.get("pairwise"))
+    sess["pairwise"] = (sess.get("pairwise") or {}) | _pair_keys(probs)
     t.lap("rank_tournament")
     store.save_session(session_id, user_id, sess | {"candidates": [c.model_dump() for c in cands],
                                                     "sliders": sliders.model_dump()})

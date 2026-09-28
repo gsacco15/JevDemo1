@@ -151,6 +151,9 @@ def _anchor(data: dict) -> str:
     """What the candidate should be responding to."""
     if data.get("hook"):
         return data["hook"]
+    msgs = data.get("messages") or []
+    if msgs and msgs[-1]["speaker"] == "user":
+        return msgs[-1]["text"]
     return data.get("last_match") or data.get("profile") or ""
 
 

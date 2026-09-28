@@ -93,6 +93,7 @@ class ConversationState(BaseModel):
     conversation_momentum: str = "neutral"
     hooks: list[Hook] = Field(default_factory=list)
     last_match_message: str | None = None
+    last_speaker: str | None = None
 
 
 class Judgment(BaseModel):

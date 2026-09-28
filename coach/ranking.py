@@ -72,6 +72,10 @@ def desired_state(state: ConversationState, strategy: str, style: StyleProfile, 
         t["escalation"] -= 0.1
         t["flirt"] -= 0.1
 
+    # (2) let Jev's read of readiness move the escalation target (the stage table is only a prior)
+    if state.stage != "PROFILE_OPENER" and state.message_count:
+        ready = max(state.escalation_readiness, 0.85 * state.date_appropriate)
+        t["escalation"] = 0.5 * t["escalation"] + 0.5 * ready
     # follow the match's lead a little
     if state.stage != "PROFILE_OPENER":
         t["flirt"] += 0.3 * (state.flirt_level - t["flirt"])
@@ -181,10 +185,12 @@ def hard_reject(c: Candidate, state: ConversationState, strategy: str, desired: 
     if c.features.get("words", 0) > max(3 * desired["words"], 45):
         reasons.append("far too long for this conversation")
     rel = c.judgments.get("relevance")
-    if mode == "reply" and strategy not in ("CHANGE_TOPIC", "PULL_BACK") and rel and rel.value < 0.1 and trusted(c, "relevance"):
+    if (mode == "reply" and strategy not in ("CHANGE_TOPIC", "PULL_BACK", "WAIT") and state.last_speaker != "user"
+            and rel and rel.value < 0.1 and trusted(c, "relevance")):
         reasons.append("doesn't respond to the conversation")
     g, sp = c.judgments.get("generic"), c.judgments.get("specificity")
-    if g and sp and g.value > 0.8 and sp.value < 0.25 and trusted(c, "generic"):
+    g_cut, sp_cut = (0.9, 0.15) if strategy == "CHANGE_TOPIC" else (0.8, 0.25)  # a fresh topic is allowed to be broad
+    if g and sp and g.value > g_cut and sp.value < sp_cut and trusted(c, "generic"):
         reasons.append("generic line that could go to anyone")
     return reasons
 
@@ -242,7 +248,7 @@ def score_candidate(c: Candidate, state: ConversationState, strategy: str, alt_s
     pens = {
         "cringe": pen("cringe", 25),
         "neediness": pen("neediness", 20),
-        "genericness": pen("generic", 18, floor=0.25),
+        "genericness": pen("generic", 9 if strategy == "CHANGE_TOPIC" else 18, floor=0.25),
         "pressure": pen("pressure", 8 if asking else 15),
         "repetition": pen("repeats", 25, floor=0.3),
         "pickup_line": pen("pickup_line", 20, floor=0.2),
@@ -250,7 +256,8 @@ def score_candidate(c: Candidate, state: ConversationState, strategy: str, alt_s
         "invented_info": pen("invented_info", 20, floor=0.3),
         "asks_known_info": pen("asks_known_info", 15, floor=0.3),
     }
-    if v(c, "asks_question", 0.3) > 0.5 and state.questions_recently_asked_by_user >= 2:
+    if (v(c, "asks_question", 0.3) > 0.5 and state.questions_recently_asked_by_user >= 2
+            and strategy not in ("CHANGE_TOPIC", "ASK_QUESTION", "ANSWER_AND_REDIRECT") and state.need_question < 0.6):
         pens["question_overload"] = 8.0
     # asking for more is only "premature" relative to how bold the user asked us to be
     boldness_ask = clamp(desired["escalation"] - 0.3, 0, 0.6) / 0.6
@@ -288,7 +295,7 @@ def apply_tournament(finalists: list[Candidate], pair_probs: dict[tuple[str, str
             else:
                 wins += 0.5
         c.pairwise_winrate = round(wins / len(others), 3)
-        c.final = round(c.total + 12 * (c.pairwise_winrate - 0.5), 2)
+        c.final = round(c.total + settings.tournament_weight * (c.pairwise_winrate - 0.5), 2)
 
 
 def similarity(a: Candidate, b: Candidate) -> float:

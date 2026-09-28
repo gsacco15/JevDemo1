@@ -34,6 +34,8 @@ class Settings:
     # Pipeline sizes
     num_candidates: int = field(default_factory=lambda: int(os.environ.get("NUM_CANDIDATES", "30")))
     tournament_size: int = 12
+    # how much Jev's head-to-head win rate moves the final score (+/- half this at 100%/0% win rate)
+    tournament_weight: float = field(default_factory=lambda: _env_float("TOURNAMENT_WEIGHT", 30))
 
     # Confidence policy (System One -> System Two)
     conf_auto: float = field(default_factory=lambda: _env_float("CONF_AUTO", 0.90))

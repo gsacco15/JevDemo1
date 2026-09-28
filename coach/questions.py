@@ -144,8 +144,9 @@ LEVELS_4 = lambda none, low, mid, high: [none, low, mid, high]  # noqa: E731
 
 CANDIDATE_QUESTIONS = [
     # message quality
-    score("relevance", "How directly does `candidate_message` respond to the match's last message in `conversation` "
-          "(or to `match_profile` when `mode` is opener)?", LEVELS_4(
+    score("relevance", "How well does `candidate_message` fit as the next message after the most recent message in "
+          "`conversation`? If the match sent it, does the candidate respond to it; if the user sent it (a follow-up), "
+          "does the candidate make sense on top of it? When `mode` is opener, judge fit to `match_profile`.", LEVELS_4(
               "Ignores it entirely; could follow any message",
               "Loosely connected",
               "Clearly responds to it",

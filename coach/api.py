@@ -13,7 +13,6 @@ from pydantic import BaseModel
 
 from . import llm, personalization, pipeline, store
 from .config import settings
-from .parsing import USER_LABELS
 from .profile import from_model, parse_profile, profile_to_text
 from .schemas import CoachRequest, FeedbackRequest, RerankRequest, StyleProfile
 
@@ -174,7 +173,7 @@ async def parse_chat_shots(files: list[UploadFile] = File(...), existing: str = 
     images = await read_shots(files)
     out = await llm.chat_from_screenshots(images, existing)
     name = (out.get("match_name") or "").strip().split(" ")[0][:20]
-    them = name if name and name.lower() not in USER_LABELS else {"she": "Her", "he": "Him"}.get(pronoun, "Them")
+    them = "Him" if pronoun == "he" else "Her"
     msgs = [m for m in out.get("messages", []) if (m.get("text") or "").strip()]
     text = "\n".join(f"{'Me' if m['speaker'] == 'user' else them}: {' '.join(m['text'].split())}" for m in msgs)
     return {"conversation_text": text, "messages": len(msgs), "match_name": name or None, "images": len(images)}

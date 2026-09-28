@@ -573,7 +573,7 @@ function parseConv(text) {
   const out = [];
   for (const raw of (text || "").split("\n")) {
     const line = raw.trim(); if (!line) continue;
-    const m = line.match(/^([A-Za-z][\w .'-]{0,24})\s*[:：]\s*(.*)$/);
+    const m = line.match(/^(\p{L}[^:：]{0,24}?)\s*[:：](?!\/\/)\s*(.*)$/u);
     if (m) out.push({ me: USER_LABELS.has(m[1].trim().toLowerCase()), who: m[1].trim(), text: m[2] });
     else if (out.length) out[out.length - 1].text += " " + line;
     else out.push({ me: false, who: "", text: line });

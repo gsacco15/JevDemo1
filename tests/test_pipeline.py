@@ -317,9 +317,11 @@ def test_chat_screenshots_become_conversation_text(monkeypatch):
         files = [("files", (f"s{i}.jpg", b"\xff\xd8fake", "image/jpeg")) for i in range(4)]
         body = c.post("/api/parse-chat-shots", files=files, data={"existing": "Me: hey", "pronoun": "she"}).json()
         assert seen == {"n": 4, "existing": "Me: hey"} and body["messages"] == 3 and body["match_name"] == "Maddie"
-        assert body["conversation_text"] == "Me: tacos or nothing\nMaddie: breakfast tacos obviously 🌮\nMe: correct answer"
+        assert body["conversation_text"] == "Me: tacos or nothing\nHer: breakfast tacos obviously 🌮\nMe: correct answer"
         msgs = parse_conversation(body["conversation_text"])
         assert [m.speaker for m in msgs] == ["user", "match", "user"]
-        replies["match_name"] = ""  # no name visible -> label from the pronoun
-        body = c.post("/api/parse-chat-shots", files=files[:1], data={"pronoun": "she"}).json()
-        assert body["conversation_text"].splitlines()[1].startswith("Her: ")
+        body = c.post("/api/parse-chat-shots", files=files[:1], data={"pronoun": "he"}).json()
+        assert body["conversation_text"].splitlines()[1].startswith("Him: ")
+    # typed or pasted chats with any name still alternate correctly
+    typed = parse_conversation("Me: hey\nZoë: hiii\nMe: tacos?\nMaddie 🌮: obviously\nChloé-Anne: wait who\nMe: ok")
+    assert [m.speaker for m in typed] == ["user", "match", "user", "match", "match", "user"]

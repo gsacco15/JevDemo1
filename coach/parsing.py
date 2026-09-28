@@ -11,7 +11,8 @@ import re
 from .schemas import Message
 
 USER_LABELS = {"me", "i", "you", "user", "self", "mine"}
-LINE_RE = re.compile(r"^\s*([A-Za-z][\w .'-]{0,24})\s*[:：]\s*(.*)$")
+# a speaker label: any name, incl. accents or a trailing emoji ("Zoë:", "Maddie 🌮:")
+LINE_RE = re.compile(r"^\s*([^\W\d_][^:：\n]{0,24}?)\s*[:：](?!//)\s*(.*)$")
 
 
 def parse_conversation(text: str) -> list[Message]:

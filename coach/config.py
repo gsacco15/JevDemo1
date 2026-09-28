@@ -40,7 +40,9 @@ class Settings:
     conf_escalate: float = field(default_factory=lambda: _env_float("CONF_ESCALATE", 0.65))
 
     # Privacy
-    db_path: str = field(default_factory=lambda: os.environ.get("COACH_DB", "data/coach.db"))
+    # Serverless hosts (Vercel) only allow writes under /tmp
+    db_path: str = field(default_factory=lambda: os.environ.get(
+        "COACH_DB", "/tmp/coach.db" if os.environ.get("VERCEL") else "data/coach.db"))
     retention_hours: float = field(default_factory=lambda: _env_float("RETENTION_HOURS", 24))
 
     @property

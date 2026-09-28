@@ -10,7 +10,7 @@ from .config import settings
 from .schemas import CoachRequest, FeedbackRequest, RerankRequest, StyleProfile
 
 app = FastAPI(title="Jev Dating Message Coach", version="0.1.0")
-STATIC = Path(__file__).resolve().parent.parent / "static"
+STATIC = Path(__file__).resolve().parent.parent / "public"
 
 
 def uid(x_user_id: str | None) -> str:

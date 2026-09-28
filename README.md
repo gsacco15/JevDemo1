@@ -65,7 +65,13 @@ and expects `answers: [{id, probabilities | probability | score, confidence}]`. 
 | `coach/explain.py` | Conversation read, move labels, and per-pick "why". Describes fit, never predicts outcomes. |
 | `coach/llm.py` | Claude generation, low-confidence escalation, screenshot parsing |
 | `coach/store.py` | SQLite. Sessions auto-expire, screenshots are never stored, one call deletes all data |
-| `static/index.html` | Single-page test UI, including an "Under the hood" view of every candidate and score |
+| `public/index.html` | Single-page test UI, including an "Under the hood" view of every candidate and score |
+
+## Deploying on Vercel
+
+`pyproject.toml` sets `[tool.vercel] entrypoint = "coach.api:app"`, and Vercel's CDN serves `public/index.html` at `/`. Add `ANTHROPIC_API_KEY` and `JEV_API_KEY` as environment variables in the project settings.
+
+Caveat: on Vercel, SQLite lives in `/tmp`, which is per instance and temporary. Sessions and learned preferences can vanish, and a slider re-rank can hit "Session expired" if it lands on a different instance. That's fine for a demo. For real use, move `coach/store.py` to Postgres (for example Supabase).
 
 ## API
 

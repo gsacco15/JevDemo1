@@ -196,7 +196,73 @@ def test_hinge_style_profile_parsing_keeps_prompts_and_photos():
     assert texts[0].startswith("Together we could: Find the best margarita")
     assert any(t.startswith("Photo: Barton Springs photo - swimming") for t in texts)
     assert not any("Photo set" in t or "Image description" in t for t in texts)
-    assert [s for s, _ in hooks][-1] == "basic"  # basics come last
+    assert not any(t.startswith("Height") for t in texts)  # height isn't something to open on
     r = run(pipeline.coach(CoachRequest(mode="opener", profile_text=prof), "t14"))
     assert "margarita" in r["state"]["hooks"][0]["text"].lower() or "barton" in r["state"]["hooks"][0]["text"].lower()
     assert r["stats"]["state_judgments"] == {}  # no conversation questions asked for an opener
+
+
+MIXED_PROFILE = """Here's another completely fictional Hinge profile as raw information, intentionally in mixed order:
+Maddie, 29
+The key to my heart is
+Tacos, good banter, and actually making plans instead of talking about making plans
+5'4"
+Austin, Texas
+Account Executive
+Drinks sometimes
+University of Colorado Boulder
+Dating intention
+Long term relationship
+Typical Sunday
+Pilates, an unnecessarily expensive coffee, convincing myself I'll meal prep, then somehow ending up at a patio with friends
+Woman
+Originally from Denver, Colorado
+Has a dog
+Gemini
+Together we could
+Book a flight because it was cheap and figure out the rest when we get there
+Wants children
+Photo captions/details visible on profile:
+Standing outside a restaurant in a black dress with two friends
+Holding a golden retriever at Zilker Park"""
+
+
+def test_unlabeled_mixed_order_profile_is_sorted():
+    from coach.profile import parse_profile
+    p = parse_profile(MIXED_PROFILE)
+    assert (p["name"], p["age"]) == ("Maddie", "29")
+    assert [q for q, _ in p["prompts"]] == ["The key to my heart is", "Typical Sunday", "Together we could"]
+    assert p["prompts"][0][1].startswith("Tacos")
+    b = p["basics"]
+    assert b["Location"] == "Austin, Texas" and b["Hometown"] == "Denver, Colorado" and b["Job"] == "Account Executive"
+    assert b["Height"] == "5'4\"" and b["Zodiac"] == "Gemini" and b["Dating intention"] == "Long term relationship"
+    assert b["Education"].startswith("University") and b["Pets"] == "Has a dog" and b["Kids"] == "Wants children"
+    assert len(p["photos"]) == 2 and p["other"] == []
+    from fastapi.testclient import TestClient
+    from coach.api import app
+    with TestClient(app) as c:
+        r = c.post("/api/parse-profile", json={"text": MIXED_PROFILE}).json()
+    assert r["name"] == "Maddie" and len(r["prompts"]) == 3
+
+
+def test_profiles_from_other_apps_and_messy_notes():
+    from coach.profile import parse_profile, looks_weak, from_model
+    tinder = parse_profile("Jess 26\n📍 Lives in Brooklyn\n🎓 NYU\n💼 Nurse at Mount Sinai\n3 miles away\nAbout me\n"
+                           "Professional brunch critic. Will judge your coffee order.\nInterests\nHiking · Ramen · Live music\n"
+                           "Lifestyle\nSocial drinker\nNever smoke")
+    assert (tinder["name"], tinder["basics"]["Location"], tinder["basics"]["Job"]) == ("Jess", "Brooklyn", "Nurse at Mount Sinai")
+    assert tinder["basics"]["Interests"] == "Hiking, Ramen, Live music" and tinder["prompts"][0][0] == "About me"
+    messy = parse_profile("omg ok so this girl on bumble\nname - Priya\n28\nlives in seattle but from chicago\n"
+                          "3 photos: 1) at a concert 2) skiing 3) with a corgi\ninto: skiing, true crime podcasts\n"
+                          "height 5'5, drinks socially, no smoking, dog lover")
+    assert (messy["name"], messy["age"]) == ("Priya", "28") and messy["photos"] == ["at a concert", "skiing", "with a corgi"]
+    assert messy["basics"]["Hometown"] == "chicago" and messy["basics"]["Height"] == "5'5" and not looks_weak(messy, "x")
+    para = parse_profile("Emma 27 London. Works in marketing. Loves climbing and sourdough. Photos: her at a climbing wall, one on a boat")
+    assert para["basics"]["Location"] == "London" and len(para["photos"]) == 2
+    okc = parse_profile("Rachel · 33 · Chicago, IL\nMy self-summary\nTeacher by day, baker by night.\n"
+                        "What I'm doing with my life\nVisiting every national park.")
+    assert okc["basics"]["Location"] == "Chicago, IL" and [q for q, _ in okc["prompts"]] == ["About me", "What I'm doing with my life"]
+    # the model fallback's output lands in the same shape
+    m = from_model({"name": "Ana", "age": "30", "basics": [{"label": "Job", "value": "Chef"}],
+                    "prompts": [{"title": "", "answer": "I make pasta"}], "photos": ["surfing"]})
+    assert m["basics"] == {"Job": "Chef"} and m["prompts"] == [["About me", "I make pasta"]]

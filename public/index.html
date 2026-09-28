@@ -574,32 +574,25 @@ function parseConv(text) {
   }
   return out.filter(m => m.text);
 }
-const BASIC_KEYS = new Set(["name", "age", "location", "job", "work", "education", "school", "height", "dating intention", "politics", "drinking", "drinks",
-  "smoking", "exercise", "hometown", "religion", "kids", "children", "family plans", "pets", "zodiac", "languages", "relationship type"]);
-const HEADERS = new Set(["photo set", "photos", "hinge prompts", "prompts", "profile", "basics", "about", "about me"]);
-function parseProfile(text) {
-  const lines = (text || "").split("\n").map(l => l.trim()), out = { basics: {}, prompts: [], photos: [], other: [] };
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].replace(/^[-•|\s]+/, ""); if (!line) continue;
-    const low = line.toLowerCase().replace(/:$/, "").trim();
-    if (HEADERS.has(low) || low.startsWith("#") || low.includes("image description")) continue;
-    const row = line.match(/^(\d+)[.)]?\s+(.+)$/);
-    if (row && (lines[i].includes("\t") || /\bphoto\b/i.test(line))) { out.photos.push(row[2].split(/\t+|\s{3,}/)[0]); continue; }
-    if (/^(photo|pic|image)\s*:/i.test(line)) { out.photos.push(line.split(":").slice(1).join(":").trim()); continue; }
-    const kv = line.match(/^([^:]{1,60}):\s*(.*)$/);
-    if (kv) {
-      const k = kv[1].trim(), v = kv[2].trim();
-      if (BASIC_KEYS.has(k.toLowerCase())) { if (v) out.basics[k] = v; continue; }
-      if (!v && lines[i + 1] && !lines[i + 1].includes(":")) { out.prompts.push([k, lines[++i].trim()]); continue; }
-      if (v) { out.prompts.push([k, v]); continue; }
-    }
-    out.other.push(line);
-  }
-  return out;
+// the server parses profiles (coach/profile.py) so the preview and the hook ranker always agree
+const EMPTY_PROFILE = { name: null, age: null, basics: {}, prompts: [], photos: [], other: [] };
+let profCache = { text: null, data: EMPTY_PROFILE }, profTimer = null, threadTyping = false;
+function parseProfile(raw) {
+  if (profCache.text === raw) return profCache.data;
+  clearTimeout(profTimer);
+  profTimer = setTimeout(async () => {
+    try {
+      const r = await fetch("/api/parse-profile", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: raw }) });
+      if (!r.ok) return;
+      profCache = { text: raw, data: await r.json() };
+      if (mode === "opener") renderThread(threadTyping);
+    } catch (e) { /* keep the last preview */ }
+  }, 120);
+  return profCache.text && raw.startsWith(profCache.text.slice(0, 40)) ? profCache.data : EMPTY_PROFILE;
 }
 function profileHTML(pr) {
-  const b = pr.basics, head = [b.Name || b.name, b.Age || b.age].filter(Boolean).join(", ");
-  const chips = Object.entries(b).filter(([k]) => !["name", "age"].includes(k.toLowerCase())).map(([k, v]) => `<span title="${esc(k)}">${esc(v)}</span>`).join("");
+  const b = pr.basics;
+  const chips = Object.entries(b).filter(([k]) => k !== "Location").map(([k, v]) => `<span title="${esc(k)}">${esc(v)}</span>`).join("");
   return `<div class="prof">
     ${chips ? `<div class="prof-basics">${chips}</div>` : ""}
     ${pr.prompts.map(([q, a]) => `<div class="prompt-c"><small>${esc(q)}</small><div>${esc(a)}</div></div>`).join("")}
@@ -608,14 +601,14 @@ function profileHTML(pr) {
   </div>`;
 }
 function renderThread(typing = false) {
-  const body = $("ph-body");
+  const body = $("ph-body"); threadTyping = typing;
   $("m-mode").textContent = mode;
   if (mode === "opener") {
     const raw = ($("profile").value || "").trim(), pr = parseProfile(raw), b = pr.basics;
-    const nm = b.Name || b.name;
+    const nm = pr.name;
     $("sec1").textContent = "Profile";
-    $("ph-name").textContent = [nm || "Their profile", b.Age || b.age].filter(Boolean).join(", "); $("ph-av").textContent = nm ? nm[0].toUpperCase() : "P";
-    $("ph-sub").textContent = b.Location || b.location || "writing an opener";
+    $("ph-name").textContent = [nm || "Their profile", pr.age].filter(Boolean).join(", "); $("ph-av").textContent = nm ? nm[0].toUpperCase() : "P";
+    $("ph-sub").textContent = [b.Location, b.Job].filter(Boolean).join(" · ") || "writing an opener";
     $("k-count").textContent = "Prompts"; $("m-count").textContent = pr.prompts.length + pr.other.length;
     $("k-last").textContent = "Photos"; $("m-last").textContent = pr.photos.length;
     body.innerHTML = (raw ? profileHTML(pr) : `<div class="empty-t">Paste their profile on the left</div>`) + (draftText || typing ? `<div class="prof draft-wrap">${draftHTML(typing)}</div>` : "");
@@ -628,7 +621,7 @@ function renderThread(typing = false) {
     body.innerHTML = (msgs.length ? msgs.map(m => `<div class="bb ${m.me ? "me" : "them"}">${esc(m.text)}</div>`).join("") : `<div class="empty-t">Paste a conversation on the left, or load a test conversation</div>`) + draftHTML(typing);
   }
   $("thread-aside").textContent = draftText ? "best pick shown as a draft" : typing ? "searching…" : "preview";
-  body.scrollTop = body.scrollHeight;
+  body.scrollTop = mode === "opener" && !draftText && !typing ? 0 : body.scrollHeight;  // profiles read top-down
   threadScrollState();
 }
 function threadScrollState() {
@@ -809,6 +802,7 @@ function onEvent(e) {
   switch (e.type) {
     case "start": L.questions = e.questions; step("read", "run"); feed(`asking Jev ${e.n_state_questions} questions about the conversation`); break;
     case "state": {
+      if (e.profile && mode === "opener") { profCache = { text: ($("profile").value || "").trim(), data: e.profile }; renderThread(threadTyping); }
       L.judgments += e.judgments; setCount("judg", L.judgments); step("read", "done", Math.round(e.ms) + " ms"); step("move", "run");
       const p = $("pn-read"); p.classList.remove("wait"); p.innerHTML = mode === "opener" ? hooksInner(e.hooks) : readInner(e.details, e.ms);
       feed(`Jev answered ${e.judgments} questions in ${Math.round(e.ms)} ms`); break;

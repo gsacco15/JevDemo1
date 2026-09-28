@@ -1,6 +1,7 @@
 """The orchestrator: understand state -> choose strategy -> search many messages -> judge -> rank -> top 3."""
 
 import asyncio
+import contextvars
 import logging
 import re
 import time
@@ -12,6 +13,7 @@ from .config import settings
 from .jev import EvalItem, HeuristicJudge, make_judge
 from .jev import heuristics as H
 from .parsing import parse_conversation, render_conversation
+from .profile import from_model, hook_pieces, looks_weak, parse_profile
 from .questions import (FOLLOWUP_QUESTION, RISK_DIMS, CANDIDATE_QUESTIONS, HOOK_APPEARANCE, HOOK_QUESTION, PAIRWISE_QUESTION,
                         REASONING_DIMS, STATE_QUESTIONS, STRATEGY_QUESTION)
 from .schemas import (Candidate, CoachRequest, ConversationState, Hook, Message, Sliders, StyleProfile)
@@ -107,69 +109,24 @@ def render_context(mode: str, messages: list[Message], profile: str | None, stat
 # 1. state
 # ---------------------------------------------------------------------------
 
-BASIC_KEYS = {"name", "age", "location", "job", "work", "education", "school", "height", "dating intention", "politics",
-              "drinking", "drinks", "smoking", "smokes", "exercise", "hometown", "religion", "religious beliefs", "kids",
-              "children", "family plans", "pets", "zodiac", "star sign", "languages", "gender", "pronouns", "sexuality",
-              "relationship type", "ethnicity", "weed", "drugs", "covid vaccine"}
-SECTION_HEADERS = {"photo set", "photos", "hinge prompts", "prompts", "profile", "basics", "vitals", "about", "about me",
-                   "#", "image description", "generation prompt"}
-# strip image-generation boilerplate like "Photorealistic ... of a fictional 30 year old woman living in Austin Texas,"
-PHOTO_BOILERPLATE = re.compile(r"^.*?\bfictional\b.*?\b(woman|man|person|guy|girl)\b(\s+(living|based)\s+in\s+[^,]+)?[,\s]*", re.I)
-
-
-def _photo_line(desc: str, detail: str) -> str:
-    """'Barton Springs photo' + 'Same fictional woman swimming at Barton Springs in Austin, standing...' ->
-    'Photo: Barton Springs photo - swimming at Barton Springs in Austin, standing waist deep'."""
-    detail = PHOTO_BOILERPLATE.sub("", detail or "").strip(" ,")
-    clauses = [c.strip() for c in detail.split(",") if c.strip()][:2]
-    words = " ".join(", ".join(clauses).split()[:18])
-    return f"Photo: {desc}" + (f" - {words}" if words else "")
-
-
 def split_profile(profile: str) -> list[tuple[str, str]]:
-    """Profile text -> hook candidates. Understands pasted Hinge-style profiles: basics ('Age: 30'), prompts with
-    the answer on the same or next line, photo lines ('Photo: ...') and tab-separated photo tables."""
-    lines = [l.strip() for l in (profile or "").splitlines()]
-    prompts, photos, basics = [], [], []
-    i = 0
-    while i < len(lines):
-        line = lines[i].strip(" -•|\t"); i += 1
-        if not line:
-            continue
-        low = line.lower().rstrip(":").strip()
-        if low in SECTION_HEADERS or low.startswith("# ") or "image description" in low:
-            continue
-        row = re.match(r"^(\d+)[.)]?\s+(.+)$", line)
-        if row and ("\t" in lines[i - 1] or re.search(r"\bphoto\b", line, re.I)):
-            cols = [c.strip() for c in re.split(r"\t+|\s{3,}", row.group(2)) if c.strip()]
-            photos.append(("photo", _photo_line(cols[0], cols[1] if len(cols) > 1 else "")))
-            continue
-        if low.startswith(("photo:", "pic:", "image:")):
-            photos.append(("photo", "Photo: " + line.split(":", 1)[1].strip()))
-            continue
-        if ":" in line:
-            key, val = (x.strip() for x in line.split(":", 1))
-            if key.lower() in BASIC_KEYS:
-                if val:
-                    basics.append(("basic", f"{key}: {val}"))
-                continue
-            if not val:  # prompt on its own line, answer on the next
-                nxt = lines[i].strip() if i < len(lines) else ""
-                if nxt and ":" not in nxt:
-                    prompts.append(("prompt", f"{key}: {nxt}")); i += 1
-                continue
-            prompts.append(("prompt", f"{key}: {val}"))
-            continue
-        if len(line.split()) >= 3:
-            for sent in re.split(r"(?<=[.!?])\s+", line):
-                if len(sent.split()) >= 3:
-                    prompts.append(("prompt", sent))
-    # prompts and photos make the best openers; basics come last and are capped
-    return (prompts + photos)[:14] + basics[:4]
+    """Profile text in any order -> hook candidates (see coach/profile.py)."""
+    return hook_pieces(profile)
 
 
-async def extract_hooks(profile: str, context: str) -> tuple[list[Hook], int]:
-    pieces = split_profile(profile)
+async def understand_profile(profile: str) -> dict:
+    """Rules first (free, instant); if they clearly missed things, let Claude structure the paste."""
+    parsed = parse_profile(profile)
+    if looks_weak(parsed, profile) and settings.use_claude:
+        try:
+            parsed = from_model(await llm.structure_profile(profile))
+        except Exception as e:  # keep the rule parse
+            log.warning("profile structuring failed: %s", e)
+    return parsed
+
+
+async def extract_hooks(profile: str, context: str, parsed: dict | None = None) -> tuple[list[Hook], int]:
+    pieces = hook_pieces(profile, parsed)
     if not pieces:
         return [], 0
     items = [EvalItem(key=f"h{i}", state=context | {"profile_detail": t}, data={"kind": "hook", "hook_text": t})
@@ -188,8 +145,12 @@ async def extract_hooks(profile: str, context: str) -> tuple[list[Hook], int]:
     return hooks, len(items) * 2
 
 
+raw_profile_holder: contextvars.ContextVar[dict | None] = contextvars.ContextVar("parsed_profile", default=None)
+
+
 async def build_state(mode: str, messages: list[Message], profile: str | None, style: StyleProfile,
                       platform: str) -> tuple[ConversationState, dict, int]:
+    raw_profile_holder.set(None)
     md = _msgs_dicts(messages)
     ctx = render_context(mode, messages, profile, None, style)
     user_sent_last = bool(messages) and messages[-1].speaker == "user" and mode == "reply"
@@ -244,7 +205,9 @@ async def build_state(mode: str, messages: list[Message], profile: str | None, s
     if mode == "opener":
         state.stage = "PROFILE_OPENER"
     if profile:
-        state.hooks, hj = await extract_hooks(profile, ctx)
+        parsed = await understand_profile(profile)
+        raw_profile_holder.set(parsed)
+        state.hooks, hj = await extract_hooks(profile, ctx, parsed)
         n_judgments += hj
     raw = {k: j.model_dump(include={"choice", "value", "confidence", "source"}) for k, j in res.items()}
     return state, raw, n_judgments
@@ -616,7 +579,7 @@ async def coach_events(req: CoachRequest, user_id: str):
     t.lap("state")
     yield ev("state", read=explain.conversation_read(state, "CONTINUE_TOPIC", req.match_pronoun, req.mode),
              judgments=n_state, ms=t.stages["state"], details=state_raw,
-             hooks=[h.model_dump() for h in state.hooks])
+             hooks=[h.model_dump() for h in state.hooks], profile=raw_profile_holder.get())
     strategy, alts, strategy_info = await choose_strategy(req.mode, messages, profile, state, style)
     t.lap("strategy")
     yield ev("strategy", strategy=strategy_info, alts=alts, ms=t.stages["strategy"],

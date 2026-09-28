@@ -200,3 +200,33 @@ Leave fields empty when not applicable."""},
     ]
     return await _json_call(settings.generator_model, "You extract structured data from screenshots.", content,
                             PARSE_SCHEMA, max_tokens=4000, effort="low")
+
+
+PROFILE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "name": {"type": "string"},
+        "age": {"type": "string"},
+        "basics": {"type": "array", "items": {"type": "object", "properties": {
+            "label": {"type": "string"}, "value": {"type": "string"}}, "required": ["label", "value"], "additionalProperties": False}},
+        "prompts": {"type": "array", "items": {"type": "object", "properties": {
+            "title": {"type": "string"}, "answer": {"type": "string"}}, "required": ["title", "answer"], "additionalProperties": False}},
+        "photos": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["name", "age", "basics", "prompts", "photos"],
+    "additionalProperties": False,
+}
+
+
+async def structure_profile(text: str) -> dict:
+    """Messy pasted dating profile (any app, any order) -> structured fields. Used only when the rule parser
+    can't make sense of the paste."""
+    system = """You turn pasted dating-app profiles (Hinge, Tinder, Bumble, OkCupid, notes, anything) into fields.
+- name/age: empty string if not given.
+- basics: short facts with a Title Case label: Location, Hometown, Job, Education, Height, Interests, Pets,
+  Drinking, Smoking, Kids, Zodiac, Religion, Politics, Dating intention, Languages, Exercise, ...
+- prompts: prompt/question titles with her answers, and bio text (title "About me"). Keep her exact words.
+- photos: one short description per photo.
+Ignore meta chatter from whoever pasted it ("here's this girl's profile", "lol"). Never invent anything."""
+    return await _json_call(settings.generator_model, system, [{"type": "text", "text": text[:8000]}],
+                            PROFILE_SCHEMA, max_tokens=3000, effort="low")

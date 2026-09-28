@@ -9,9 +9,11 @@ from fastapi import FastAPI, File, Header, HTTPException, Request, UploadFile
 import json
 
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from pydantic import BaseModel
 
 from . import llm, personalization, pipeline, store
 from .config import settings
+from .profile import parse_profile
 from .schemas import CoachRequest, FeedbackRequest, RerankRequest, StyleProfile
 
 app = FastAPI(title="Jev Dating Message Coach", version="0.1.0")
@@ -19,7 +21,7 @@ STATIC = Path(__file__).resolve().parent.parent / "public"
 
 # endpoints that spend model credits
 EXPENSIVE = {"/api/coach", "/api/coach/stream", "/api/regenerate", "/api/parse-screenshot", "/api/jev-check"}
-OPEN = {"/api/health"}
+OPEN = {"/api/health", "/api/parse-profile"}  # parse-profile is pure text rules, no model calls
 _hits: dict[str, deque] = defaultdict(deque)
 
 
@@ -122,6 +124,15 @@ def feedback(req: FeedbackRequest, x_user_id: str | None = Header(None)):
         return pipeline.feedback(req.session_id, req.candidate_id, req.kind, req.edited_text, uid(x_user_id))
     except pipeline.CoachError as e:
         _err(e)
+
+
+class ProfileText(BaseModel):
+    text: str = ""
+
+
+@app.post("/api/parse-profile")
+def parse_profile_text(body: ProfileText):
+    return parse_profile(body.text[:20000])
 
 
 @app.post("/api/parse-screenshot")

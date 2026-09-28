@@ -21,6 +21,10 @@ judge = make_judge()
 _local = HeuristicJudge()
 
 
+REJECT_NOULS = {"manipulative", "insulting", "pickup_line", "invented_info", "repeats", "asks_known_info"}
+DECISION_SCORES = {"relevance", "cringe", "neediness", "sexual"}
+
+
 class CoachError(ValueError):
     pass
 
@@ -285,20 +289,25 @@ async def judge_candidates(cands: list[Candidate], mode, messages, profile, stat
 
 async def escalate(cands: list[Candidate], context: dict) -> tuple[int, int]:
     """System Two: re-ask low-confidence judgments on contenders. Returns (low_conf_count, escalated_count)."""
+    # Only escalate judgments that can change the outcome (TypeSafe guidance: low confidence on a
+    # harmless preference is fine; ignore uncertainty that doesn't affect a decision).
     asks = []
     for c in cands:
         for qid, j in c.judgments.items():
             q = REASONING_DIMS.get(qid)
             if not q:
                 continue
-            unsure = (0.35 < j.value < 0.65) if j.kind == "noul" else j.confidence < settings.conf_escalate
+            if j.kind == "noul":
+                unsure = qid in REJECT_NOULS and 0.45 < j.value < 0.8  # near a rejection threshold
+            else:
+                unsure = qid in DECISION_SCORES and j.confidence < settings.conf_escalate
             if unsure:
                 asks.append({"id": f"{c.id}:{qid}", "candidate": c.text, "question": q.instructions,
                              "levels": list(q.levels) if q.kind == "score" else None, "kind": j.kind})
     if not asks or not settings.use_claude:
         return len(asks), 0
     try:
-        answers = await llm.resolve_low_confidence(context, asks[:80])
+        answers = await llm.resolve_low_confidence(context, asks[:settings.escalation_cap])
     except Exception:  # noqa: BLE001
         log.exception("reasoning escalation failed")
         return len(asks), 0
@@ -447,11 +456,8 @@ async def coach(req: CoachRequest, user_id: str) -> dict:
     weights = ranking.stage_weights(state.stage, prefs, req.sliders)
     ctx = render_context(req.mode, messages, profile, state, style, strategy)
     score_pool(cands, state, strategy, alts, desired, weights, req.mode)
-    contenders = sorted([c for c in cands if not c.rejected], key=lambda c: -c.total)[: settings.tournament_size]
-    # also re-check anything we *didn't* reject only because the judge was unsure
-    contenders += [c for c in cands if not c.rejected and c not in contenders
-                   and any(c.judgments.get(k) and c.judgments[k].value > 0.6 and not ranking.trusted(c, k)
-                           for k in ("manipulative", "insulting", "sexual", "pickup_line", "invented_info"))]
+    # System Two only looks at the candidates that could actually be shown
+    contenders = sorted([c for c in cands if not c.rejected], key=lambda c: -c.total)[: settings.escalation_top]
     low_conf, escalated = await escalate(contenders, ctx)
     t.lap("escalation")
 

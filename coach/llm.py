@@ -149,7 +149,7 @@ For kind=score answer the position on the listed levels as 0..1 (0 = first level
 JUDGMENTS:
 """ + "\n".join(lines)
     data = await _json_call(settings.reasoning_model, "You are a careful social-dynamics analyst.", prompt,
-                            REASON_SCHEMA, max_tokens=4000, effort="medium")
+                            REASON_SCHEMA, max_tokens=4000, effort="low")
     return {a["id"]: max(0.0, min(1.0, float(a["value"]))) for a in data.get("answers", [])}
 
 

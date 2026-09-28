@@ -206,8 +206,11 @@ CANDIDATE_QUESTIONS = [
     noul("generic", "`candidate_message` could reasonably have been sent to almost anyone on a dating app."),
     noul("repeats", "`candidate_message` repeats a joke, question, or point the user already made in `conversation`."),
     noul("invented_info", "`candidate_message` mentions facts about the match that do not appear in `match_profile` or `conversation`."),
-    noul("manipulative", "`candidate_message` uses manipulative framing, guilt-tripping, or negging."),
-    noul("insulting", "`candidate_message` could reasonably be read as a genuine insult rather than playful teasing."),
+    noul("manipulative", "`candidate_message` tries to manipulate the match: guilt-tripping them, negging them "
+         "(backhanded compliments meant to lower their confidence), or pressuring them emotionally. "
+         "Self-deprecating humor about the user's own earlier message is not manipulation."),
+    noul("insulting", "The match could reasonably feel genuinely insulted or belittled by `candidate_message` "
+         "(not playful teasing, and not the user joking about themselves)."),
     noul("pickup_line", "`candidate_message` is an obviously canned pickup line."),
     noul("asks_known_info", "`candidate_message` asks the match for information they already gave in `match_profile` or `conversation`."),
     noul("asks_question", "`candidate_message` asks the match a question."),

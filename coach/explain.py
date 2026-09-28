@@ -80,8 +80,11 @@ def _move_reason(state: ConversationState, strategy: str, p: dict) -> str:
         return "The conversation has enough momentum to move it forward."
     if strategy == "CHANGE_TOPIC":
         return "This thread has run its course - give them something easier to reply to."
-    if strategy in ("PULL_BACK", "WAIT"):
-        return "Don't chase. A low-pressure message (or no message yet) keeps you looking relaxed."
+    if strategy == "WAIT":
+        return ("Best move: don't send anything yet - you sent the last message. "
+                "If you really want to follow up, these are the lowest-pressure options.")
+    if strategy == "PULL_BACK":
+        return "Don't chase. Keep the next message short and low-pressure."
     if strategy == "FLIRT":
         return f"{p['be'].capitalize()} opening the door - a little flirting fits here."
     if strategy == "ASK_QUESTION":

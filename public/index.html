@@ -359,7 +359,7 @@ function render(r) {
       <div class="tablewrap"><table>
         <thead><tr><th>Final</th><th>Candidate</th><th>Move</th><th>Score</th><th>Pairwise</th><th>Boldness</th><th>Tone fit</th><th>Penalties</th><th>Confidence</th></tr></thead>
         <tbody>${rows}</tbody></table></div>
-      <div class="muted">Confidence column: “?” = low-confidence Jev judgments (down-weighted), “↑” = escalated to the reasoning model.</div>
+      <div class="muted">Confidence column: “?” = Jev was less certain (score used as-is), “↑” = decision-critical judgment re-checked by the reasoning model.</div>
       <h4>Conversation state</h4><pre>${esc(JSON.stringify(r.state, null, 2))}</pre>
       <h4>Desired state (targets the ranking aims for)</h4><pre>${esc(JSON.stringify(r.desired_state, null, 2))}</pre>
     </details>`;

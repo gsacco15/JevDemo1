@@ -141,15 +141,18 @@ def v(c: Candidate, dim: str, neutral: float = 0.5) -> float:
     j = c.judgments.get(dim)
     if j is None:
         return neutral
-    if j.source == "reasoning":
+    if j.source in ("jev", "reasoning") or j.kind == "noul":
+        # A Jev Score is already a probability-weighted position, and a Noul is already a
+        # probability: shrinking by confidence again would double-count the uncertainty.
+        # Confidence is used only to decide what to escalate (pipeline.escalate).
         return j.value
-    w = conf_weight(j.confidence)
+    w = conf_weight(j.confidence)  # heuristic stand-in: its made-up values deserve shrinkage
     return w * j.value + (1 - w) * neutral
 
 
 def trusted(c: Candidate, dim: str) -> bool:
     j = c.judgments.get(dim)
-    return bool(j) and (j.source == "reasoning" or j.confidence >= settings.conf_escalate)
+    return bool(j) and (j.source in ("jev", "reasoning") or j.kind == "noul" or j.confidence >= settings.conf_escalate)
 
 
 def boldness(c: Candidate) -> float:
@@ -168,8 +171,8 @@ def hard_reject(c: Candidate, state: ConversationState, strategy: str, desired: 
         if j and j.value > thr and trusted(c, dim):
             reasons.append(label)
 
-    over("manipulative", 0.6, "manipulative framing")
-    over("insulting", 0.6, "insult risk")
+    over("manipulative", 0.7, "manipulative framing")
+    over("insulting", 0.7, "insult risk")
     over("sexual", max(0.7, desired["sexual_tolerance"] + 0.35), "unnecessarily sexual")
     over("repeats", 0.75, "repeats something already said")
     over("invented_info", 0.7, "invents details about the match")

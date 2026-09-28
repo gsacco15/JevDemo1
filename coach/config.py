@@ -37,7 +37,9 @@ class Settings:
 
     # Confidence policy (System One -> System Two)
     conf_auto: float = field(default_factory=lambda: _env_float("CONF_AUTO", 0.90))
-    conf_escalate: float = field(default_factory=lambda: _env_float("CONF_ESCALATE", 0.65))
+    conf_escalate: float = field(default_factory=lambda: _env_float("CONF_ESCALATE", 0.5))
+    escalation_top: int = field(default_factory=lambda: int(os.environ.get("ESCALATION_TOP", "6")))
+    escalation_cap: int = field(default_factory=lambda: int(os.environ.get("ESCALATION_CAP", "24")))
 
     # Privacy
     # Serverless hosts (Vercel) only allow writes under /tmp

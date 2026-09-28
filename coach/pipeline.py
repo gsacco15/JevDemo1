@@ -374,7 +374,7 @@ def build_output(session_id, mode, state, strategy_info, desired, cands, finalis
         "strategy": strategy_info,
         "desired_state": desired,
         "picks": [
-            {"slot": slot, "id": c.id, "text": c.text, "why": explain.why(c, slot, strategy_info["chosen"], desired, pronoun),
+            {"slot": slot, "id": c.id, "text": c.text, "why": explain.why(c, slot, strategy_info["chosen"], desired, pronoun, state.match_behavior),
              "labels": explain.labels(c, desired), "scores": explain.display_scores(c), "final": c.final}
             for slot, c in picks
         ],

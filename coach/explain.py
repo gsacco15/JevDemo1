@@ -92,11 +92,15 @@ def _move_reason(state: ConversationState, strategy: str, p: dict) -> str:
     return "Stay on what's working."
 
 
-def why(c: Candidate, slot: str, strategy: str, desired: dict, pronoun: str) -> str:
+def why(c: Candidate, slot: str, strategy: str, desired: dict, pronoun: str, match_behavior: str | None = None) -> str:
     p = PRONOUNS[pronoun]
     parts = []
-    if strategy == "TEASE" and v(c, "playfulness") > 0.55:
-        parts.append(f"matches {p['poss']} teasing tone")
+    if match_behavior in ("teasing_challenge", "flirting") and v(c, "playfulness") > 0.55:
+        parts.append(f"matches {p['poss']} {'teasing' if match_behavior == 'teasing_challenge' else 'flirty'} energy")
+    elif strategy == "TEASE" and v(c, "playfulness") > 0.55 and v(c, "relevance") > 0.6:
+        parts.append(f"playfully riffs on what {p['subj']} said")
+    elif strategy == "TEASE" and v(c, "playfulness") > 0.55:
+        parts.append("adds some playful energy")
     elif v(c, "relevance") > 0.6:
         parts.append(f"picks up directly on what {p['subj']} said")
     elif v(c, "specificity") > 0.6:

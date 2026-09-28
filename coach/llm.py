@@ -167,41 +167,6 @@ JUDGMENTS:
     return {a["id"]: max(0.0, min(1.0, float(a["value"]))) for a in data.get("answers", [])}
 
 
-PARSE_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "kind": {"type": "string", "enum": ["conversation", "profile", "both"]},
-        "messages": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {"speaker": {"type": "string", "enum": ["user", "match"]}, "text": {"type": "string"}},
-                "required": ["speaker", "text"],
-                "additionalProperties": False,
-            },
-        },
-        "profile_text": {"type": "string"},
-    },
-    "required": ["kind", "messages", "profile_text"],
-    "additionalProperties": False,
-}
-
-
-async def parse_screenshot(image: bytes, media_type: str) -> dict:
-    content = [
-        {"type": "image", "source": {"type": "base64", "media_type": media_type,
-                                     "data": base64.standard_b64encode(image).decode()}},
-        {"type": "text", "text": """This is a screenshot from a dating app (usually Hinge).
-If it shows a chat: extract every message in order. Bubbles on the RIGHT (usually colored) are the app
-user ("user"); bubbles on the LEFT are the other person ("match"). Skip timestamps and UI chrome.
-If it shows a profile: put all prompt answers, captions, job, location and notable photo details
-(describe photos briefly, e.g. "photo: hiking in Patagonia") into profile_text, one per line.
-Leave fields empty when not applicable."""},
-    ]
-    return await _json_call(settings.generator_model, "You extract structured data from screenshots.", content,
-                            PARSE_SCHEMA, max_tokens=4000, effort="low")
-
-
 PROFILE_SCHEMA = {
     "type": "object",
     "properties": {
@@ -235,8 +200,7 @@ Ignore meta chatter from whoever pasted it ("here's this girl's profile", "lol")
 async def profile_from_screenshots(images: list[tuple[bytes, str]], existing: str = "") -> dict:
     """Several screenshots of ONE dating profile (scrolled, overlapping, any order) -> structured profile.
     Anything already captured in `existing` is kept and merged. Images are only held in memory."""
-    content = [{"type": "image", "source": {"type": "base64", "media_type": mt,
-                                            "data": base64.standard_b64encode(data).decode()}} for data, mt in images]
+    content = _images(images)
     note = f"\n\nAlready captured from earlier screenshots (keep all of it, merge new details in):\n{existing[:6000]}" \
         if existing.strip() else ""
     content.append({"type": "text", "text": f"""These {len(images)} screenshots are all from ONE person's dating profile
@@ -253,3 +217,39 @@ Capture everything on the profile exactly once:
 Ignore app buttons, likes, comments, timestamps and ads. Never invent anything you can't see.{note}"""})
     return await _json_call(settings.generator_model, "You transcribe dating profiles from screenshots into fields.",
                             content, PROFILE_SCHEMA, max_tokens=4000, effort="low")
+
+
+CHAT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "match_name": {"type": "string"},
+        "messages": {"type": "array", "items": {"type": "object", "properties": {
+            "speaker": {"type": "string", "enum": ["user", "match"]}, "text": {"type": "string"}},
+            "required": ["speaker", "text"], "additionalProperties": False}},
+    },
+    "required": ["match_name", "messages"],
+    "additionalProperties": False,
+}
+
+
+def _images(images: list[tuple[bytes, str]]) -> list[dict]:
+    return [{"type": "image", "source": {"type": "base64", "media_type": mt, "data": base64.standard_b64encode(data).decode()}}
+            for data, mt in images]
+
+
+async def chat_from_screenshots(images: list[tuple[bytes, str]], existing: str = "") -> dict:
+    """Several screenshots of ONE chat (scrolled, overlapping, any order) -> the conversation, oldest first,
+    merged with anything already captured. Images are only held in memory."""
+    note = f"\n\nAlready captured (keep every message; put new ones in the right place, don't duplicate):\n{existing[:8000]}" \
+        if existing.strip() else ""
+    content = _images(images) + [{"type": "text", "text": f"""These {len(images)} screenshots are all from ONE chat in a
+dating or messaging app (Hinge, Tinder, Bumble, iMessage, WhatsApp, Instagram...), taken while scrolling, so they
+overlap and may be out of order. Rebuild the whole conversation, oldest message first, each message exactly once.
+- speaker "user" = the phone's owner: bubbles on the RIGHT (usually colored). "match" = bubbles on the LEFT.
+- On Hinge, a like with a comment at the top of the chat is the first message, from whoever sent it.
+- Copy text exactly, including typos, slang and emoji. Separate bubbles are separate messages.
+- Photos, GIFs, stickers and voice notes become "[photo]", "[GIF]", "[sticker]", "[voice note]".
+- Skip timestamps, read receipts, "typing...", reactions, system notices and app buttons.
+- match_name: the other person's first name if it's shown (e.g. in the header), else "".{note}"""}]
+    return await _json_call(settings.generator_model, "You transcribe chat screenshots into ordered messages.",
+                            content, CHAT_SCHEMA, max_tokens=6000, effort="low")

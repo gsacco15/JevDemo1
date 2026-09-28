@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from . import llm, personalization, pipeline, store
 from .config import settings
+from .parsing import USER_LABELS
 from .profile import from_model, parse_profile, profile_to_text
 from .schemas import CoachRequest, FeedbackRequest, RerankRequest, StyleProfile
 
@@ -20,7 +21,7 @@ app = FastAPI(title="Jev Dating Message Coach", version="0.1.0")
 STATIC = Path(__file__).resolve().parent.parent / "public"
 
 # endpoints that spend model credits
-EXPENSIVE = {"/api/coach", "/api/coach/stream", "/api/regenerate", "/api/parse-screenshot", "/api/parse-profile-shots",
+EXPENSIVE = {"/api/coach", "/api/coach/stream", "/api/regenerate", "/api/parse-chat-shots", "/api/parse-profile-shots",
              "/api/jev-check"}
 OPEN = {"/api/health", "/api/parse-profile"}  # parse-profile is pure text rules, no model calls
 _hits: dict[str, deque] = defaultdict(deque)
@@ -136,30 +137,15 @@ def parse_profile_text(body: ProfileText):
     return parse_profile(body.text[:20000])
 
 
-@app.post("/api/parse-screenshot")
-async def parse_screenshot(file: UploadFile = File(...)):
-    """Screenshot -> messages/profile. Image is processed in memory and never stored."""
-    if not settings.use_claude:
-        raise HTTPException(400, "Screenshot parsing needs ANTHROPIC_API_KEY (vision). Paste the text for now.")
-    media_type = file.content_type or "image/png"
-    if media_type not in ("image/png", "image/jpeg", "image/webp", "image/gif"):
-        raise HTTPException(400, f"Unsupported image type {media_type}")
-    data = await file.read()
-    if len(data) > 8 * 1024 * 1024:
-        raise HTTPException(400, "Image too large (max 8MB)")
-    return await llm.parse_screenshot(data, media_type)
+MAX_SHOTS = 10
 
 
-MAX_PROFILE_SHOTS = 10
-
-
-@app.post("/api/parse-profile-shots")
-async def parse_profile_shots(files: list[UploadFile] = File(...), existing: str = Form("")):
-    """Several profile screenshots -> one merged profile as text. Images are read in memory and never stored."""
+async def read_shots(files: list[UploadFile]) -> list[tuple[bytes, str]]:
+    """Validate uploaded screenshots and read them into memory (never written anywhere)."""
     if not settings.use_claude:
         raise HTTPException(400, "Reading screenshots needs ANTHROPIC_API_KEY (vision). Paste the text for now.")
-    if len(files) > MAX_PROFILE_SHOTS:
-        raise HTTPException(400, f"Up to {MAX_PROFILE_SHOTS} screenshots at a time")
+    if len(files) > MAX_SHOTS:
+        raise HTTPException(400, f"Up to {MAX_SHOTS} screenshots at a time")
     images, total = [], 0
     for f in files:
         mt = f.content_type or "image/jpeg"
@@ -170,8 +156,28 @@ async def parse_profile_shots(files: list[UploadFile] = File(...), existing: str
         images.append((data, mt))
     if total > 20 * 1024 * 1024:
         raise HTTPException(400, "Images too large in total (max 20MB)")
+    return images
+
+
+@app.post("/api/parse-profile-shots")
+async def parse_profile_shots(files: list[UploadFile] = File(...), existing: str = Form("")):
+    """Several profile screenshots -> one merged profile as text."""
+    images = await read_shots(files)
     parsed = from_model(await llm.profile_from_screenshots(images, existing))
     return {"profile_text": profile_to_text(parsed), "profile": parsed, "images": len(images)}
+
+
+@app.post("/api/parse-chat-shots")
+async def parse_chat_shots(files: list[UploadFile] = File(...), existing: str = Form(""),
+                           pronoun: str = Form("they")):
+    """Several chat screenshots -> the whole conversation as 'Me: ... / Her: ...' text."""
+    images = await read_shots(files)
+    out = await llm.chat_from_screenshots(images, existing)
+    name = (out.get("match_name") or "").strip().split(" ")[0][:20]
+    them = name if name and name.lower() not in USER_LABELS else {"she": "Her", "he": "Him"}.get(pronoun, "Them")
+    msgs = [m for m in out.get("messages", []) if (m.get("text") or "").strip()]
+    text = "\n".join(f"{'Me' if m['speaker'] == 'user' else them}: {' '.join(m['text'].split())}" for m in msgs)
+    return {"conversation_text": text, "messages": len(msgs), "match_name": name or None, "images": len(images)}
 
 
 @app.get("/api/style")

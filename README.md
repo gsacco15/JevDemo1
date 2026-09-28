@@ -87,7 +87,8 @@ Caveat: on Vercel, SQLite lives in `/tmp`, which is per instance and temporary. 
 - `POST /api/rerank`: `{session_id, sliders}` (instant, no model calls)
 - `POST /api/regenerate`: `{session_id, sliders}` (adds candidates to the pool)
 - `POST /api/feedback`: `{session_id, candidate_id, kind}` where kind is copy, like, dislike, too_much, too_boring, too_cheesy, not_me, too_long, more_direct, less_direct, or edited
-- `POST /api/parse-screenshot`: multipart image
+- `POST /api/parse-chat-shots`: up to 10 chat screenshots (multipart `files`) -> the conversation as text
+- `POST /api/parse-profile-shots`: up to 10 profile screenshots -> their profile as text
 - `GET/PUT /api/style`, `DELETE /api/preferences`, `DELETE /api/sessions/{id}`, `DELETE /api/me`
 
 Conversations use "Me:" lines for the user. Any other label is the match. The data model is platform-agnostic (`platform` field), and Hinge is the default.

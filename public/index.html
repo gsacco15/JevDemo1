@@ -77,7 +77,9 @@ select { appearance: none; -webkit-appearance: none; cursor: pointer; padding-ri
 .drop { display: flex; align-items: center; gap: 8px; border: 1px dashed var(--line-2); border-radius: 10px; padding: 9px 11px; font-size: 12.5px; color: var(--muted); cursor: pointer; min-width: 0; }
 .drop:hover { border-color: var(--ink-2); color: var(--ink); }
 .drop input { display: none; }
-.drop.pshots { margin-top: 8px; justify-content: center; }
+.drop.shots { margin-top: 8px; justify-content: center; }
+.pron { margin-top: 10px; }
+.pron select { width: 100%; }
 .drop.busy { opacity: .7; pointer-events: none; }
 .drop.over { border-color: var(--accent); color: var(--ink); }
 .drop span:last-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -387,15 +389,15 @@ h5.t { font-size: 12.5px; margin: 18px 0 8px; }
       <div id="conv-wrap">
         <div class="lbl">Conversation <span>Me: is you</span></div>
         <textarea id="conv" oninput="onConvInput()" spellcheck="false" placeholder="Me: ok but I'm dangerously good at go karts&#10;Her: Lol you definitely couldn't keep up"></textarea>
+        <label class="drop shots" id="cshots-drop"><input type="file" id="cshots" multiple accept="image/png,image/jpeg,image/webp,image/heic" onchange="uploadShots('chat', this.files); this.value=''"><span>↑</span><span id="cshots-note">Add chat screenshots · up to 10</span></label>
       </div>
       <div id="profile-wrap" class="hidden" style="margin-top:12px">
         <div class="lbl">Their profile <span id="profile-opt">optional</span></div>
         <textarea id="profile" oninput="onConvInput()" spellcheck="false" style="min-height:100px" placeholder="Paste their profile in any order, or add screenshots below"></textarea>
-        <label class="drop pshots" id="pshots-drop"><input type="file" id="pshots" multiple accept="image/png,image/jpeg,image/webp,image/heic" onchange="uploadProfileShots(this.files); this.value=''"><span>↑</span><span id="pshots-note">Add profile screenshots · up to 10</span></label>
+        <label class="drop shots" id="pshots-drop"><input type="file" id="pshots" multiple accept="image/png,image/jpeg,image/webp,image/heic" onchange="uploadShots('profile', this.files); this.value=''"><span>↑</span><span id="pshots-note">Add profile screenshots · up to 10</span></label>
       </div>
       <button class="linkish" id="profile-toggle" onclick="toggleProfile()">+ Add their profile</button>
-      <div class="two">
-        <label class="drop"><input type="file" id="shot" accept="image/png,image/jpeg,image/webp" onchange="uploadShot(this)"><span>↑</span><span id="shot-note">Screenshot</span></label>
+      <div class="pron">
         <select id="pronoun" onchange="renderThread()" aria-label="Who you're texting">
           <option value="she">She</option><option value="he">He</option><option value="they" selected>They</option>
         </select>
@@ -1053,19 +1055,6 @@ async function saveStyle() {
 async function resetPrefs() { await api("/api/preferences", { method: "DELETE" }); loadStyle(); toast("Learned preferences reset"); }
 async function deleteSession() { if (!session) return toast("Nothing to delete"); await api("/api/sessions/" + session, { method: "DELETE" }); session = null; last = null; draftText = null; renderThread(); emptyState(); toast("Conversation deleted"); }
 async function deleteAll() { if (!confirm("Delete your style, learned preferences, feedback and all conversations?")) return; await api("/api/me", { method: "DELETE" }); session = null; last = null; draftText = null; renderThread(); loadStyle(); emptyState(); toast("All your data was deleted"); }
-async function uploadShot(input) {
-  const f = input.files[0]; if (!f) return;
-  $("shot-note").textContent = "Reading…";
-  const fd = new FormData(); fd.append("file", f);
-  try {
-    const res = await authFetch("/api/parse-screenshot", { method: "POST", body: fd }), body = await res.json();
-    if (!res.ok) throw new Error(body.detail || res.statusText);
-    if (body.messages?.length) { $("conv").value = body.messages.map(m => (m.speaker === "user" ? "Me: " : "Them: ") + m.text).join("\n"); setMode("reply"); }
-    if (body.profile_text) { $("profile").value = body.profile_text; showProfile(true); if (!body.messages?.length) setMode("opener"); }
-    activeScenario = null; renderThread(); $("shot-note").textContent = "Imported";
-  } catch (e) { $("shot-note").textContent = e.message; }
-  input.value = "";
-}
 // Shrink screenshots on the device: faster uploads, and Vercel rejects request bodies over ~4.5MB
 async function shrinkImage(file, maxSide = 1800, quality = 0.82) {
   const url = URL.createObjectURL(file);
@@ -1078,46 +1067,66 @@ async function shrinkImage(file, maxSide = 1800, quality = 0.82) {
     return k === 1 && file.size <= out.size && /^image\/(png|jpeg|webp)$/.test(file.type) ? file : out;  // already small: send as is
   } finally { URL.revokeObjectURL(url); }
 }
-async function uploadProfileShots(fileList) {
-  const files = [...(fileList || [])].filter(f => f.type.startsWith("image/") || /\.heic$/i.test(f.name));
+const SHOTS = {
+  chat: { box: "conv", note: "cshots-note", drop: "cshots-drop", url: "/api/parse-chat-shots", label: "Add chat screenshots · up to 10" },
+  profile: { box: "profile", note: "pshots-note", drop: "pshots-drop", url: "/api/parse-profile-shots", label: "Add profile screenshots · up to 10" },
+};
+async function uploadShots(kind, fileList) {
+  const k = SHOTS[kind], files = [...(fileList || [])].filter(f => f.type.startsWith("image/") || /\.heic$/i.test(f.name));
   if (!files.length) return;
-  const note = $("pshots-note"), drop = $("pshots-drop"), MAX = 10;
-  if (files.length > MAX) { note.textContent = `Pick up to ${MAX} at a time`; return; }
-  drop.classList.add("busy"); note.textContent = `Preparing ${files.length} screenshot${files.length > 1 ? "s" : ""}…`;
+  const note = $(k.note), drop = $(k.drop), MAX = 10, n = files.length, s = n > 1 ? "s" : "";
+  if (n > MAX) { note.textContent = `Pick up to ${MAX} at a time`; return; }
+  drop.classList.add("busy"); note.textContent = `Preparing ${n} screenshot${s}…`;
   try {
     let blobs = await Promise.all(files.map(f => shrinkImage(f)));
-    if (blobs.reduce((n, b) => n + b.size, 0) > 4e6) blobs = await Promise.all(files.map(f => shrinkImage(f, 1400, 0.65)));
+    if (blobs.reduce((t, b) => t + b.size, 0) > 4e6) blobs = await Promise.all(files.map(f => shrinkImage(f, 1400, 0.65)));
     const fd = new FormData();
     blobs.forEach((b, i) => fd.append("files", b, `shot${i + 1}.jpg`));
-    fd.append("existing", $("profile").value || "");
-    note.textContent = `Reading ${files.length} screenshot${files.length > 1 ? "s" : ""}…`;
-    const res = await authFetch("/api/parse-profile-shots", { method: "POST", body: fd }), body = await res.json();
+    fd.append("existing", $(k.box).value || "");
+    if (kind === "chat") fd.append("pronoun", $("pronoun").value);
+    note.textContent = `Reading ${n} screenshot${s}…`;
+    const res = await authFetch(k.url, { method: "POST", body: fd }), body = await res.json();
     if (!res.ok) throw new Error(body.detail || res.statusText);
-    $("profile").value = body.profile_text; showProfile(true); autoGrow($("profile"));
-    profCache = { text: body.profile_text.trim(), data: body.profile };
-    activeScenario = null; renderThread();
-    const p = body.profile;
-    note.textContent = `Captured ${p.prompts.length} prompts · ${p.photos.length} photos · add more to merge`;
-    toast(`Read ${body.images} screenshot${body.images > 1 ? "s" : ""} into their profile`);
+    activeScenario = null; draftText = null;
+    if (kind === "chat") {
+      $("conv").value = body.conversation_text; autoGrow($("conv"));
+      note.textContent = `Captured ${body.messages} messages · add more to merge`;
+    } else {
+      $("profile").value = body.profile_text; showProfile(true); autoGrow($("profile"));
+      profCache = { text: body.profile_text.trim(), data: body.profile };
+      note.textContent = `Captured ${body.profile.prompts.length} prompts · ${body.profile.photos.length} photos · add more to merge`;
+    }
+    renderThread();
+    toast(`Read ${body.images} screenshot${body.images > 1 ? "s" : ""} into the ${kind === "chat" ? "conversation" : "profile"}`);
   } catch (e) { note.textContent = e.message; }
   finally { drop.classList.remove("busy"); }
 }
-function wireProfileDrop() {  // drag screenshots onto the profile box or the drop
-  for (const el of [$("profile"), $("pshots-drop")]) {
-    el.addEventListener("dragover", e => { if ([...e.dataTransfer.items].some(i => i.kind === "file")) { e.preventDefault(); $("pshots-drop").classList.add("over"); } });
-    el.addEventListener("dragleave", () => $("pshots-drop").classList.remove("over"));
-    el.addEventListener("drop", e => { if (!e.dataTransfer.files.length) return; e.preventDefault(); $("pshots-drop").classList.remove("over"); uploadProfileShots(e.dataTransfer.files); });
+function wireShotDrops() {  // drag screenshots onto a box or its drop, or paste them (Cmd/Ctrl+V)
+  for (const kind of ["chat", "profile"]) {
+    const k = SHOTS[kind], hot = on => $(k.drop).classList.toggle("over", on);
+    for (const el of [$(k.box), $(k.drop)]) {
+      el.addEventListener("dragover", e => { if ([...e.dataTransfer.items].some(i => i.kind === "file")) { e.preventDefault(); hot(true); } });
+      el.addEventListener("dragleave", () => hot(false));
+      el.addEventListener("drop", e => { if (!e.dataTransfer.files.length) return; e.preventDefault(); hot(false); uploadShots(kind, e.dataTransfer.files); });
+    }
   }
+  document.addEventListener("paste", e => {
+    const imgs = [...(e.clipboardData?.files || [])].filter(f => f.type.startsWith("image/"));
+    if (!imgs.length) return;
+    e.preventDefault();
+    const kind = document.activeElement === $("profile") || mode === "opener" ? "profile" : "chat";
+    uploadShots(kind, imgs);
+  });
 }
 async function init() {
-  wireProfileDrop();
+  wireShotDrops();
   buildFaders(); setMode("reply"); emptyState();
   $("scenario").innerHTML += SCENARIOS.map((s, i) => `<option value="${i}">${esc(s.name)}</option>`).join("");
   try {
     const h = await api("/api/health"), b = h.backends;
     $("sys").innerHTML = `<span>${esc(b.judge)} · ${esc(b.generator.replace("claude:", "").replace("claude-", ""))}</span>` + (b.judge === "jev" ? `<a href="#" onclick="testJev();return false">test</a>` : "");
-    if (!h.screenshots) { $("shot").disabled = true; $("shot-note").textContent = "Needs API key";
-      $("pshots").disabled = true; $("pshots-note").textContent = "Screenshots need the Claude key"; }
+    if (!h.screenshots) for (const k of Object.values(SHOTS)) {
+      $(k.drop).querySelector("input").disabled = true; $(k.note).textContent = "Screenshots need the Claude key"; }
   } catch (_) {}
   loadStyle();
 }

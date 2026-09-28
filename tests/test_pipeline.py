@@ -294,3 +294,32 @@ def test_profile_screenshots_merge_into_profile_text(monkeypatch):
         too_many = [("files", (f"s{i}.jpg", b"x", "image/jpeg")) for i in range(11)]
         assert c.post("/api/parse-profile-shots", files=too_many).status_code == 400
         assert c.post("/api/parse-profile-shots", files=[("files", ("a.txt", b"x", "text/plain"))]).status_code == 400
+
+
+def test_chat_screenshots_become_conversation_text(monkeypatch):
+    from fastapi.testclient import TestClient
+    from coach import api, llm
+    from coach.config import settings
+    from coach.parsing import parse_conversation
+    replies = {"match_name": "Maddie Smith", "messages": [
+        {"speaker": "user", "text": "tacos or   nothing"}, {"speaker": "match", "text": "breakfast tacos obviously 🌮"},
+        {"speaker": "match", "text": ""}, {"speaker": "user", "text": "correct answer"}]}
+    seen = {}
+
+    async def fake(images, existing=""):
+        seen["n"], seen["existing"] = len(images), existing
+        return replies
+    monkeypatch.setattr(llm, "chat_from_screenshots", fake)
+    monkeypatch.setattr(settings, "anthropic_api_key", "test")
+    monkeypatch.setattr(settings, "force_mock", False)
+    api._hits.clear()
+    with TestClient(api.app) as c:
+        files = [("files", (f"s{i}.jpg", b"\xff\xd8fake", "image/jpeg")) for i in range(4)]
+        body = c.post("/api/parse-chat-shots", files=files, data={"existing": "Me: hey", "pronoun": "she"}).json()
+        assert seen == {"n": 4, "existing": "Me: hey"} and body["messages"] == 3 and body["match_name"] == "Maddie"
+        assert body["conversation_text"] == "Me: tacos or nothing\nMaddie: breakfast tacos obviously 🌮\nMe: correct answer"
+        msgs = parse_conversation(body["conversation_text"])
+        assert [m.speaker for m in msgs] == ["user", "match", "user"]
+        replies["match_name"] = ""  # no name visible -> label from the pronoun
+        body = c.post("/api/parse-chat-shots", files=files[:1], data={"pronoun": "she"}).json()
+        assert body["conversation_text"].splitlines()[1].startswith("Her: ")

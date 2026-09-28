@@ -81,6 +81,15 @@ async def generate_candidates(ctx: dict) -> list[dict]:
         spread = (f"Write {ctx['n']} distinct candidate messages. Spread them out on purpose:\n"
                   "- about 60% use the recommended move, the rest use the alternatives\n"
                   "- roughly a third each chill / balanced / bold")
+    turn = ""
+    if ctx.get("last_speaker") == "user":
+        reason = {"fix_mistake": "fix the mistake/typo in the user's own last message",
+                  "add_missing_info": "add the information the user's last message left out",
+                  "answer_skipped": "answer the question from the match that the user skipped"}.get(ctx.get("followup_reason") or "")
+        turn = ("\nTURN: The USER sent the last message and the match has not replied yet. These are FOLLOW-UPS sent on "
+                "top of the user's own message, not replies to the match's older message. "
+                + (f"Each one should {reason}, quickly and lightly." if reason else
+                   "There is no strong reason to send more, so every option must be very low-pressure and optional.") + "\n")
     prompt = f"""MODE: {ctx['mode']}  (reply = respond to the conversation; opener = first message on a profile)
 PLATFORM: {ctx['platform']}
 MATCH PRONOUN: {ctx['pronoun']}
@@ -97,7 +106,7 @@ CONVERSATION (oldest first):
 CONVERSATION STATE (from our judgment layer):
 {json.dumps(ctx['state_summary'], indent=1)}
 
-RECOMMENDED MOVE: {ctx['strategy']}
+{turn}RECOMMENDED MOVE: {ctx['strategy']}
 ALSO WORTH EXPLORING: {alt}
 
 USER STYLE:

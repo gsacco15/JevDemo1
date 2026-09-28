@@ -38,6 +38,8 @@ It works with **no keys**, using local stand-ins:
 
 The stand-ins exist so the whole pipeline can be exercised and inspected. They are not meant to be good at social judgment: the heuristic judge is keyword-based, and the template generator has a fixed pool that includes deliberately bad lines, so the rejection layer has something to catch. Judge the product's quality with real keys.
 
+**Public deploys:** set `APP_PASSWORD` to require a password (the page asks once and remembers it in that browser). Searches are rate limited per IP with `RATE_LIMIT_PER_HOUR` (default 60).
+
 Other settings: `NUM_CANDIDATES` (30), `CONF_AUTO` (0.90), `CONF_ESCALATE` (0.65), `RETENTION_HOURS` (24), `COACH_DB`, `COACH_FORCE_MOCK=1`.
 
 ## Jev integration

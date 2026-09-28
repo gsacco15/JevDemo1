@@ -112,10 +112,26 @@ STRATEGY_CRITERIA = {
     "SUGGEST_SPECIFIC_DATE": "Propose a specific plan, place, or time",
     "PULL_BACK": "Ease off and send something low-pressure",
     "WAIT": "Send nothing yet; the user has already sent the last message(s)",
+    "FOLLOW_UP": "The user already sent the last message, but should send a short follow-up to it (fix a mistake, add missing info)",
     "CLARIFY": "Ask what the match meant because their message was ambiguous",
     "END_CONVERSATION": "Politely wrap up the conversation",
 }
 assert set(STRATEGY_CRITERIA) == set(STRATEGIES)
+
+# Asked only when the user sent the most recent message: is it their turn at all?
+FOLLOWUP_REASONS = {
+    "none": "No good reason: another message now would just be chasing or double-texting; the user should wait for a reply",
+    "fix_mistake": "The user's own last message has a mistake, typo, or wrong detail (e.g. a day, time, name) worth correcting",
+    "add_missing_info": "The user's last message left out information the match clearly needs, like a time, place, or how to meet",
+    "answer_skipped": "The match asked the user something earlier that the user never answered",
+}
+FOLLOWUP_QUESTION = choice(
+    "followup_reason",
+    "The user sent the most recent message(s) in `conversation` and the match has not replied yet. Is there a good "
+    "reason for the user to send another message before the match replies? Wanting to keep the conversation going "
+    "is not by itself a good reason.",
+    FOLLOWUP_REASONS,
+)
 
 STRATEGY_QUESTION = choice(
     "strategy",

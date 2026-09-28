@@ -209,6 +209,7 @@ def strategy_alignment(c: Candidate, strategy: str) -> float:
         "FLIRT": lambda: 1 - abs(v(c, "flirt") - 0.6),
         "ESCALATE_FLIRT": lambda: v(c, "flirt"),
         "CONTINUE_TOPIC": lambda: rel,
+        "FOLLOW_UP": lambda: rel,
         "CHANGE_TOPIC": lambda: 0.5 * (1 - rel) + 0.5 * q,
         "ASK_FOR_NUMBER": lambda: v(c, "asks_number", 0.1),
         "ASK_FOR_DATE": lambda: v(c, "asks_date", 0.1),
@@ -261,10 +262,11 @@ def score_candidate(c: Candidate, state: ConversationState, strategy: str, alt_s
         pens["question_overload"] = 8.0
     # asking for more is only "premature" relative to how bold the user asked us to be
     boldness_ask = clamp(desired["escalation"] - 0.3, 0, 0.6) / 0.6
-    if v(c, "asks_number", 0.1) > 0.5:
+    planning = state.stage == "DATE_PLANNING" or state.match_behavior == "logistics" or state.date_appropriate >= 0.8
+    if v(c, "asks_number", 0.1) > 0.5 and state.number_appropriate < 0.8:
         base = 8 if strategy == "ASK_FOR_NUMBER" else 20
         pens["premature_number"] = base * (1 - state.number_appropriate) * (1 - 0.6 * boldness_ask)
-    if v(c, "asks_date", 0.1) > 0.5:
+    if v(c, "asks_date", 0.1) > 0.5 and not planning:
         base = 8 if strategy in ("ASK_FOR_DATE", "SUGGEST_SPECIFIC_DATE") else 20
         pens["premature_date"] = base * (1 - state.date_appropriate) * (1 - 0.6 * boldness_ask)
     if state.stage == "READY_TO_ESCALATE" and v(c, "escalation") < 0.2:

@@ -43,6 +43,10 @@ class Settings:
     escalation_top: int = field(default_factory=lambda: int(os.environ.get("ESCALATION_TOP", "6")))
     escalation_cap: int = field(default_factory=lambda: int(os.environ.get("ESCALATION_CAP", "24")))
 
+    # Access control for public deploys: set APP_PASSWORD to require it; searches are rate limited per IP
+    app_password: str | None = field(default_factory=lambda: os.environ.get("APP_PASSWORD") or None)
+    rate_limit_per_hour: int = field(default_factory=lambda: int(os.environ.get("RATE_LIMIT_PER_HOUR", "60")))
+
     # Privacy
     # Serverless hosts (Vercel) only allow writes under /tmp
     db_path: str = field(default_factory=lambda: os.environ.get(

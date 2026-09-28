@@ -133,6 +133,24 @@ input[type=range]::-moz-range-thumb { width: 12px; height: 12px; border-radius: 
 .typing i { width: 5px; height: 5px; border-radius: 50%; background: var(--muted); animation: blink 1.1s infinite; }
 .typing i:nth-child(2) { animation-delay: .15s; } .typing i:nth-child(3) { animation-delay: .3s; }
 @keyframes blink { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
+.prof { display: flex; flex-direction: column; gap: 10px; }
+.prof-basics { display: flex; flex-wrap: wrap; gap: 5px; }
+.prof-basics span { font-size: 11.5px; padding: 3px 8px; border-radius: 6px; background: var(--sunk); border: 1px solid var(--line); color: var(--ink-2); }
+.prompt-c { border: 1px solid var(--line); border-radius: 12px; padding: 11px 14px; background: var(--sunk); animation: in .25s var(--ease) both; }
+.prompt-c small { display: block; font-size: 11.5px; color: var(--muted); margin-bottom: 3px; }
+.prompt-c div { font-size: 15px; font-weight: 500; letter-spacing: -.01em; line-height: 1.35; }
+.photo-r { display: flex; gap: 10px; align-items: baseline; font-size: 12.5px; color: var(--ink-2); padding: 5px 0; border-top: 1px dashed var(--line); }
+.photo-r i { font: 400 10.5px var(--mono); font-style: normal; color: var(--faint); flex: none; width: 46px; }
+.prof .draft-wrap { display: flex; flex-direction: column; margin-top: 4px; }
+.hook { display: grid; grid-template-columns: 22px minmax(0, 1fr) 70px 30px; gap: 8px; align-items: center; font-size: 12.5px; padding: 6px 0; border-bottom: 1px solid var(--line); animation: in .3s ease both; }
+.hook:last-child { border-bottom: none; }
+.hook .rk { font: 400 10.5px var(--mono); color: var(--faint); }
+.hook .tx { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
+.hook .tx i { font: 400 9.5px var(--mono); font-style: normal; color: var(--faint); margin-right: 7px; letter-spacing: .05em; text-transform: uppercase; }
+.hook .tx b { font-weight: 500; color: var(--accent); font-size: 10.5px; margin-left: 6px; }
+.hook .t { height: 3px; background: var(--cell); border-radius: 2px; overflow: hidden; } .hook .t span { display: block; height: 100%; background: var(--ink-2); }
+.hook .v { font: 400 11px var(--mono); text-align: right; }
+.hook.top .tx { color: var(--ink); font-weight: 600; } .hook.top .t span { background: var(--accent); }
 .empty-t { margin: auto; color: var(--faint); font-size: 13px; text-align: center; }
 @keyframes in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 
@@ -384,13 +402,13 @@ h5.t { font-size: 12.5px; margin: 18px 0 8px; }
   <!-- ================= CANVAS ================= -->
   <main class="canvas"><div class="canvas-in">
     <section class="sec">
-      <div class="sec-h"><h2><small>01</small>Conversation</h2><span class="aside" id="thread-aside">preview</span></div>
+      <div class="sec-h"><h2><small>01</small><span id="sec1">Conversation</span></h2><span class="aside" id="thread-aside">preview</span></div>
       <div class="card thread">
         <div class="thread-body" id="ph-body"></div>
         <div class="thread-meta">
           <div class="who"><div class="av" id="ph-av">?</div><div><b id="ph-name">Your match</b><span id="ph-sub">hinge</span></div></div>
-          <div class="kv"><span>Messages</span><b id="m-count">0</b></div>
-          <div class="kv"><span>Last sent by</span><b id="m-last">–</b></div>
+          <div class="kv"><span id="k-count">Messages</span><b id="m-count">0</b></div>
+          <div class="kv"><span id="k-last">Last sent by</span><b id="m-last">–</b></div>
           <div class="kv"><span>Mode</span><b id="m-mode">reply</b></div>
         </div>
       </div>
@@ -448,6 +466,10 @@ const SCENARIOS = [
     moves: ["CHANGE_TOPIC", "PULL_BACK", "WAIT"], checks: [["not needy", r => jv(r, "neediness") < 0.3], ["no pressure", r => jv(r, "pressure") < 0.35]] },
   { name: "You double-texted", mode: "reply", text: "Her: haha that's funny\nMe: so what do you do for work?\nMe: hello?",
     moves: ["WAIT", "PULL_BACK"], checks: [["low pressure", r => jv(r, "pressure") < 0.3], ["not needy", r => jv(r, "neediness") < 0.35]] },
+  { name: "You already replied", mode: "reply", text: "Me: ok but I'm dangerously good at go karts\nHer: Lol you definitely couldn't keep up\nMe: I'll allow the head start",
+    moves: ["WAIT"], checks: [] },
+  { name: "Fix your own typo", mode: "reply", text: "Me: we should grab a drink sometime\nHer: yes! I'm free thursday or saturday\nMe: ok want to go firday at 7pm to the rodeo",
+    moves: ["FOLLOW_UP"], checks: [["best pick fixes the day", r => /thurs|sat/i.test((r.picks.find(p => p.slot === "BEST") || {}).text || "")]] },
   { name: "Ready to ask her out", mode: "reply", text: "Me: ok ramen is my weakness\nHer: same!! I'm very serious about ramen\nMe: what's your go-to spot\nHer: there's this tiny place on 6th, best tonkotsu in the city\nMe: bold claim\nHer: I stand by it 😏 you'd agree if you tried it",
     moves: ["ASK_FOR_DATE", "SUGGEST_SPECIFIC_DATE", "TEASE"], checks: [["best pick moves toward meeting", r => jv(r, "asks_date") > 0.5]] },
   { name: "Flirty", mode: "reply", text: "Me: you seem like trouble\nHer: only the fun kind 😏\nMe: that's the worst kind\nHer: or the best kind. depends if you can handle it",
@@ -472,11 +494,27 @@ const human = s => String(s ?? "").replace(/_/g, " ").toLowerCase();
 const pct = v => Math.round(Math.max(0, Math.min(1, v)) * 100);
 const cell = (v, risk) => `color-mix(in srgb, var(${risk ? "--accent" : "--ink"}) ${Math.round(6 + pct(v) * (risk ? .8 : .72))}%, var(--surface))`;
 function toast(msg) { const t = $("toast"); t.textContent = msg; t.classList.add("on"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("on"), 1800); }
+// Optional access password (set APP_PASSWORD on the server). Stored in this browser only.
+function getKey() { try { return localStorage.getItem("jevcoach.key") || ""; } catch (_) { return ""; } }
+function setKey(k) { try { localStorage.setItem("jevcoach.key", k); } catch (_) {} }
+async function authFetch(path, opts = {}, retry = true) {
+  const headers = { ...(opts.headers || {}), "x-app-key": getKey() };
+  const res = await fetch(path, { ...opts, headers });
+  if (res.status === 401 && retry) {
+    const k = prompt("This coach is password protected. Enter the access password:");
+    if (k) { setKey(k.trim()); return authFetch(path, opts, false); }
+  }
+  return res;
+}
 async function api(path, opts = {}) {
-  const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts });
+  const res = await authFetch(path, { ...opts, headers: { "Content-Type": "application/json", ...(opts.headers || {}) } });
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body.detail || res.statusText);
+  if (!res.ok) throw new Error(res.status === 401 ? "Wrong or missing access password." : (body.detail || res.statusText));
   return body;
+}
+async function testJev() {
+  try { const r = await api("/api/jev-check"); toast(r.ok ? `Jev OK · ${r.model} · ${r.latency_ms} ms` : `Jev problem: ${r.error || r.reason}`); }
+  catch (e) { toast(e.message); }
 }
 function paint(el) { el.style.setProperty("--v", (el.value * 100) + "%"); }
 
@@ -521,15 +559,53 @@ function parseConv(text) {
   }
   return out.filter(m => m.text);
 }
+const BASIC_KEYS = new Set(["name", "age", "location", "job", "work", "education", "school", "height", "dating intention", "politics", "drinking", "drinks",
+  "smoking", "exercise", "hometown", "religion", "kids", "children", "family plans", "pets", "zodiac", "languages", "relationship type"]);
+const HEADERS = new Set(["photo set", "photos", "hinge prompts", "prompts", "profile", "basics", "about", "about me"]);
+function parseProfile(text) {
+  const lines = (text || "").split("\n").map(l => l.trim()), out = { basics: {}, prompts: [], photos: [], other: [] };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].replace(/^[-•|\s]+/, ""); if (!line) continue;
+    const low = line.toLowerCase().replace(/:$/, "").trim();
+    if (HEADERS.has(low) || low.startsWith("#") || low.includes("image description")) continue;
+    const row = line.match(/^(\d+)[.)]?\s+(.+)$/);
+    if (row && (lines[i].includes("\t") || /\bphoto\b/i.test(line))) { out.photos.push(row[2].split(/\t+|\s{3,}/)[0]); continue; }
+    if (/^(photo|pic|image)\s*:/i.test(line)) { out.photos.push(line.split(":").slice(1).join(":").trim()); continue; }
+    const kv = line.match(/^([^:]{1,60}):\s*(.*)$/);
+    if (kv) {
+      const k = kv[1].trim(), v = kv[2].trim();
+      if (BASIC_KEYS.has(k.toLowerCase())) { if (v) out.basics[k] = v; continue; }
+      if (!v && lines[i + 1] && !lines[i + 1].includes(":")) { out.prompts.push([k, lines[++i].trim()]); continue; }
+      if (v) { out.prompts.push([k, v]); continue; }
+    }
+    out.other.push(line);
+  }
+  return out;
+}
+function profileHTML(pr) {
+  const b = pr.basics, head = [b.Name || b.name, b.Age || b.age].filter(Boolean).join(", ");
+  const chips = Object.entries(b).filter(([k]) => !["name", "age"].includes(k.toLowerCase())).map(([k, v]) => `<span title="${esc(k)}">${esc(v)}</span>`).join("");
+  return `<div class="prof">
+    ${chips ? `<div class="prof-basics">${chips}</div>` : ""}
+    ${pr.prompts.map(([q, a]) => `<div class="prompt-c"><small>${esc(q)}</small><div>${esc(a)}</div></div>`).join("")}
+    ${pr.other.map(t => `<div class="prompt-c"><div>${esc(t)}</div></div>`).join("")}
+    ${pr.photos.length ? `<div>${pr.photos.map((ph, i) => `<div class="photo-r"><i>photo ${i + 1}</i><span>${esc(ph)}</span></div>`).join("")}</div>` : ""}
+  </div>`;
+}
 function renderThread(typing = false) {
   const body = $("ph-body");
   $("m-mode").textContent = mode;
   if (mode === "opener") {
-    const lines = ($("profile").value || "").split("\n").map(s => s.trim()).filter(Boolean);
-    $("ph-name").textContent = "Their profile"; $("ph-av").textContent = "P"; $("ph-sub").textContent = "writing an opener";
-    $("m-count").textContent = lines.length + " lines"; $("m-last").textContent = "–";
-    body.innerHTML = (lines.length ? lines.map(l => `<div class="bb them">${esc(l)}</div>`).join("") : `<div class="empty-t">Paste their profile on the left</div>`) + draftHTML(typing);
+    const raw = ($("profile").value || "").trim(), pr = parseProfile(raw), b = pr.basics;
+    const nm = b.Name || b.name;
+    $("sec1").textContent = "Profile";
+    $("ph-name").textContent = [nm || "Their profile", b.Age || b.age].filter(Boolean).join(", "); $("ph-av").textContent = nm ? nm[0].toUpperCase() : "P";
+    $("ph-sub").textContent = b.Location || b.location || "writing an opener";
+    $("k-count").textContent = "Prompts"; $("m-count").textContent = pr.prompts.length + pr.other.length;
+    $("k-last").textContent = "Photos"; $("m-last").textContent = pr.photos.length;
+    body.innerHTML = (raw ? profileHTML(pr) : `<div class="empty-t">Paste their profile on the left</div>`) + (draftText || typing ? `<div class="prof draft-wrap">${draftHTML(typing)}</div>` : "");
   } else {
+    $("sec1").textContent = "Conversation"; $("k-count").textContent = "Messages"; $("k-last").textContent = "Last sent by";
     const msgs = parseConv($("conv").value), them = msgs.find(m => !m.me);
     const name = them && them.who && !["her", "him", "them", "match"].includes(them.who.toLowerCase()) ? them.who : "Your match";
     $("ph-name").textContent = name; $("ph-av").textContent = name === "Your match" ? "?" : name[0].toUpperCase(); $("ph-sub").textContent = "texting · " + $("pronoun").value;
@@ -561,8 +637,8 @@ function emptyState() {
 const STEPS = [["read", "Read chat"], ["move", "Pick move"], ["write", "Write"], ["judge", "Judge"], ["filter", "Filter"], ["score", "Score"], ["tourney", "Tournament"], ["pick", "Pick 3"]];
 const STATE_LABELS = { stage: "Stage", tone: "Their tone", match_behavior: "What they're doing", momentum: "Momentum", match_engagement: "Their engagement",
   user_engagement: "Your engagement", flirt_level: "Flirtiness so far", escalation_readiness: "Ready to escalate", need_question: "Needs a question",
-  number_appropriate: "OK to ask for number", date_appropriate: "OK to suggest a date" };
-const STATE_KIND = { stage: "choice", tone: "choice", match_behavior: "choice", momentum: "choice", number_appropriate: "noul", date_appropriate: "noul" };
+  number_appropriate: "OK to ask for number", date_appropriate: "OK to suggest a date", followup_reason: "Reason to send more?" };
+const STATE_KIND = { stage: "choice", tone: "choice", match_behavior: "choice", momentum: "choice", number_appropriate: "noul", date_appropriate: "noul", followup_reason: "choice" };
 const BATCH_DESC = { balanced: "the recommended move, done well", bold: "bolder, more forward takes", chill: "relaxed and low-risk", templates: "offline templates (no Claude key)" };
 let L = null, tick = null;
 const numHTML = (id, label) => `<div class="num" id="c-${id}"><div class="n">0</div><div class="l">${label}</div></div>`;
@@ -580,7 +656,7 @@ function startLive() {
         <ol class="rail">${STEPS.map(([k, label]) => `<li id="st-${k}"><b>${label}</b><small></small></li>`).join("")}</ol>
         <div class="nums">${numHTML("msgs", "messages written")}${numHTML("judg", "Jev judgments")}${numHTML("fly", "calls in flight")}${numHTML("pairs", "head-to-heads")}${numHTML("rej", "rejected")}</div>
         <div class="g2">
-          <div class="pn wait" id="pn-read"><h4>Jev reads the conversation</h4><div class="sub">11 typed questions · one call</div><div class="skel" style="width:90%"></div><div class="skel" style="width:70%"></div><div class="skel" style="width:80%"></div></div>
+          <div class="pn wait" id="pn-read"><h4>${mode === "opener" ? "Jev ranks the profile hooks" : "Jev reads the conversation"}</h4><div class="sub">${mode === "opener" ? "every prompt and photo scored as an opener" : "11 typed questions · one call"}</div><div class="skel" style="width:90%"></div><div class="skel" style="width:70%"></div><div class="skel" style="width:80%"></div></div>
           <div class="pn wait" id="pn-move"><h4>Jev chooses the move</h4><div class="sub">14 possible moves, then rules</div><div class="skel" style="width:85%"></div><div class="skel" style="width:55%"></div></div>
         </div>
         <div class="pn wait" id="pn-write"><h4>Claude writes candidates in parallel</h4><div class="sub">separate writers explore different parts of the message space</div>
@@ -617,6 +693,13 @@ function readInner(details, ms, animate = true) {
   const ents = Object.entries(details || {});
   return `<h4>Jev reads the conversation</h4><div class="sub">${ents.length} typed judgments · one call${ms != null ? " · " + Math.round(ms) + " ms" : ""}</div>` +
     ents.map(([qid, d], i) => `<div class="qa" style="animation-delay:${animate ? i * 60 : 0}ms"><span class="q"><i>${(STATE_KIND[qid] || "score").toUpperCase()}</i>${esc(STATE_LABELS[qid] || human(qid))}</span><span class="a">${answerHTML(qid, d)}</span></div>`).join("");
+}
+function hooksInner(hooks, animate = true) {
+  const hs = hooks || [];
+  return `<h4>Jev ranks the profile hooks</h4><div class="sub">${hs.length} details · each scored as an opener + a looks-only check</div>` +
+    (hs.length ? hs.map((h, i) => `<div class="hook ${i === 0 ? "top" : ""}" style="animation-delay:${animate ? i * 50 : 0}ms" title="${esc(h.text)}">
+      <span class="rk">${i + 1}</span><span class="tx"><i>${esc(h.source)}</i>${esc(h.text)}${h.is_appearance ? "<b>looks only</b>" : ""}</span>
+      <span class="t"><span style="width:${pct(h.strength)}%"></span></span><span class="v">${pct(h.strength)}</span></div>`).join("") : `<div class="note">No usable details found.</div>`);
 }
 function moveInner(strategy, ms, animate = true) {
   const probs = Object.entries(strategy.probs || {});
@@ -694,7 +777,7 @@ function onEvent(e) {
     case "start": L.questions = e.questions; step("read", "run"); feed(`asking Jev ${e.n_state_questions} questions about the conversation`); break;
     case "state": {
       L.judgments += e.judgments; setCount("judg", L.judgments); step("read", "done", Math.round(e.ms) + " ms"); step("move", "run");
-      const p = $("pn-read"); p.classList.remove("wait"); p.innerHTML = readInner(e.details, e.ms);
+      const p = $("pn-read"); p.classList.remove("wait"); p.innerHTML = mode === "opener" ? hooksInner(e.hooks) : readInner(e.details, e.ms);
       feed(`Jev answered ${e.judgments} questions in ${Math.round(e.ms)} ms`); break;
     }
     case "strategy": {
@@ -749,8 +832,8 @@ async function run() {
   draftText = null; startLive();
   try {
     const body = { mode, conversation_text: $("conv").value, profile_text: $("profile").value, sliders: sliders(), match_pronoun: $("pronoun").value };
-    const res = await fetch("/api/coach/stream", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error(b.detail || res.statusText); }
+    const res = await authFetch("/api/coach/stream", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error(res.status === 401 ? "Wrong or missing access password." : (b.detail || res.statusText)); }
     const reader = res.body.getReader(), dec = new TextDecoder(); let buf = "";
     for (;;) {
       const { value, done } = await reader.read(); if (done) break;
@@ -769,16 +852,17 @@ async function run() {
 // ===========================================================================
 function readSection(rd, strategy, r) {
   const isWait = strategy.chosen === "WAIT";
-  const hold = !isWait && ((strategy.trailing_user || 0) >= 1 || (strategy.hold_prob || 0) >= 0.25);
+  const isFollow = strategy.chosen === "FOLLOW_UP";
+  const hold = !isWait && (isFollow || (strategy.hold_prob || 0) >= 0.25);
   return `<section class="sec">
     <div class="sec-h"><h2><small>02</small>Read</h2><span class="aside">${esc(Object.keys(strategy.probs || {}).length ? "Jev · " + pct((strategy.probs || {})[strategy.chosen] || 0) + "% on this move" : "")}</span></div>
     <div class="card read"><div class="l"><h3>${esc(rd.summary)}</h3>
-        <div class="tags"><span class="tag">vibe <b>${esc(rd.vibe)}</b></span><span class="tag">momentum <b>${esc(rd.momentum)}</b></span><span class="tag">escalation <b>${esc(rd.escalation)}</b></span></div>
+        ${mode === "opener" ? "" : `<div class="tags"><span class="tag">vibe <b>${esc(rd.vibe)}</b></span><span class="tag">momentum <b>${esc(rd.momentum)}</b></span><span class="tag">escalation <b>${esc(rd.escalation)}</b></span></div>`}
         <p>${esc(rd.move_reason)}</p></div>
       <div class="r"><div class="k">Recommended move</div><div class="v">${esc(rd.recommended_move)}</div></div>
       <div class="scorecard" id="scorecard"></div></div>
     ${isWait ? `<div class="card notice strong"><div class="ic">◌</div><div><b>Best move: don't send anything yet.</b><p>You sent the last message. Give her room to reply. The options below are only if you really want to follow up.</p></div></div>` : ""}
-    ${hold ? `<div class="card notice"><div class="ic">◌</div><div><b>Option: don't reply yet.</b><p>${(strategy.trailing_user || 0) >= 1 ? "You sent the last message, so waiting is a real option." : "Jev gives holding back a real chance here."}</p></div><div class="pv" title="Jev: wait + pull back">${pct(strategy.hold_prob || 0)}%</div></div>` : ""}
+    ${hold ? `<div class="card notice"><div class="ic">◌</div><div><b>${isFollow ? "Or skip the follow-up." : "Option: don't reply yet."}</b><p>${isFollow ? "You sent the last message. A quick fix is worth it here, but waiting for her reply is always fine too." : "Jev gives holding back a real chance here."}</p></div>${isFollow ? "" : `<div class="pv" title="Jev: wait + pull back">${pct(strategy.hold_prob || 0)}%</div>`}</div>` : ""}
   </section>`;
 }
 function scorecardHTML(r) {
@@ -862,7 +946,7 @@ function render(r) {
       <div class="sec-h"><h2><small>04</small>How it was decided</h2><span class="aside">${total} × ${nQ} judgments · ${s.pairwise_comparisons} matchups${s.reranked_only ? " · re-ranked for your tone" : ""}</span></div>
       <div class="card proc">
         <div class="proc-h">${rolesHTML}<div class="clock">${(full.timings_ms.total / 1000).toFixed(1)}s<small>search time</small></div></div>
-        <div class="g2"><div class="pn">${readInner(stateDetails, null, false)}</div><div class="pn">${moveInner(r.strategy, null, false)}</div></div>
+        <div class="g2"><div class="pn">${r.mode === "opener" ? hooksInner(r.state.hooks, false) : readInner(stateDetails, null, false)}</div><div class="pn">${moveInner(r.strategy, null, false)}</div></div>
         <div class="pn"><div class="gt"><h4>Every message × every Jev question, ranked</h4><span class="mono muted" style="font-size:11px">${(total * nQ).toLocaleString()} cells</span></div>${legendHTML}<div class="hw">${staticGrid(r)}</div></div>
         <div class="g2b">
           <div class="pn"><h4>Funnel</h4><div class="sub">every idea → the three you see</div><div class="fun">${funnelHTML([["Written", total], ["Passed checks", total - s.rejected], ["Finalists", fin], ["Shown to you", r.picks.length]], false)}</div></div>
@@ -943,7 +1027,7 @@ async function uploadShot(input) {
   $("shot-note").textContent = "Reading…";
   const fd = new FormData(); fd.append("file", f);
   try {
-    const res = await fetch("/api/parse-screenshot", { method: "POST", body: fd }), body = await res.json();
+    const res = await authFetch("/api/parse-screenshot", { method: "POST", body: fd }), body = await res.json();
     if (!res.ok) throw new Error(body.detail || res.statusText);
     if (body.messages?.length) { $("conv").value = body.messages.map(m => (m.speaker === "user" ? "Me: " : "Them: ") + m.text).join("\n"); setMode("reply"); }
     if (body.profile_text) { $("profile").value = body.profile_text; showProfile(true); if (!body.messages?.length) setMode("opener"); }
@@ -956,7 +1040,7 @@ async function init() {
   $("scenario").innerHTML += SCENARIOS.map((s, i) => `<option value="${i}">${esc(s.name)}</option>`).join("");
   try {
     const h = await api("/api/health"), b = h.backends;
-    $("sys").innerHTML = `<span>${esc(b.judge)} · ${esc(b.generator.replace("claude:", "").replace("claude-", ""))}</span>` + (b.judge === "jev" ? `<a href="/api/jev-check" target="_blank" rel="noopener">test</a>` : "");
+    $("sys").innerHTML = `<span>${esc(b.judge)} · ${esc(b.generator.replace("claude:", "").replace("claude-", ""))}</span>` + (b.judge === "jev" ? `<a href="#" onclick="testJev();return false">test</a>` : "");
     if (!h.screenshots) { $("shot").disabled = true; $("shot-note").textContent = "Needs API key"; }
   } catch (_) {}
   loadStyle();

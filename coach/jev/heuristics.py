@@ -520,7 +520,36 @@ def state_judgments(d: dict) -> dict[str, tuple[Any, float]]:
         "need_question": (need_q, 0.75),
         "number_appropriate": (clamp(readiness * 1.1 - 0.15 - (0.3 if n < 8 else 0)), conf_len * 0.9),
         "date_appropriate": (clamp(readiness * 1.05 - 0.2 - (0.3 if n < 10 else 0)), conf_len * 0.9),
+        "followup_reason": followup_probs(d),
     }
+
+
+DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "tonight", "tomorrow"]
+
+
+def _days(text: str) -> set[str]:
+    import difflib
+    out = set()
+    for w in words(text):
+        m = difflib.get_close_matches(w, DAYS, n=1, cutoff=0.75)
+        if m:
+            out.add(m[0])
+    return out
+
+
+def followup_probs(d: dict) -> tuple[dict[str, float], float]:
+    """Stand-in: flag a day the match never offered (\"firday\" when she said thu/sat); otherwise no reason."""
+    msgs = _msgs(d)
+    trailing = []
+    for m in reversed(msgs):
+        if m["speaker"] != "user":
+            break
+        trailing.append(m["text"])
+    last_match = next((m["text"] for m in reversed(msgs) if m["speaker"] == "match"), "")
+    offered, said = _days(last_match), _days(" ".join(trailing))
+    if offered and said and not (offered & said):
+        return {"none": 0.12, "fix_mistake": 0.8, "add_missing_info": 0.05, "answer_skipped": 0.03}, 0.8
+    return {"none": 0.85, "fix_mistake": 0.05, "add_missing_info": 0.05, "answer_skipped": 0.05}, 0.78
 
 
 def strategy_probs(state: dict, mode: str) -> tuple[dict[str, float], float]:

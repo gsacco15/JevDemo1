@@ -137,3 +137,66 @@ def test_double_text_recommends_waiting():
     r = run(pipeline.coach(CoachRequest(conversation_text=conv, match_pronoun="she"), "t9"))
     assert r["strategy"]["chosen"] == "WAIT"
     assert r["strategy"]["trailing_user"] == 2
+
+
+def test_turn_awareness():
+    replied = TEASE_CONV + "\nMe: I'll allow the head start"
+    r = run(pipeline.coach(CoachRequest(conversation_text=replied, match_pronoun="she"), "t10"))
+    assert r["strategy"]["chosen"] == "WAIT" and r["state"]["followup_reason"] == "none"
+    typo = "Me: we should grab a drink sometime\nHer: yes! I'm free thursday or saturday\nMe: ok want to go firday at 7pm"
+    r = run(pipeline.coach(CoachRequest(conversation_text=typo, match_pronoun="she"), "t11"))
+    assert r["strategy"]["chosen"] == "FOLLOW_UP" and r["state"]["followup_reason"] == "fix_mistake"
+
+
+def test_no_premature_date_penalty_when_she_is_planning():
+    conv = "Me: we should grab a drink sometime\nHer: yes! I'm free thursday or saturday"
+    r = run(pipeline.coach(CoachRequest(conversation_text=conv, match_pronoun="she"), "t12"))
+    assert not any("premature_date" in c["penalties"] for c in r["pool"])
+
+
+def test_feedback_learns_against_neutral_target_not_sliders():
+    r = run(pipeline.coach(CoachRequest(conversation_text=TEASE_CONV, sliders=Sliders(bold=0, flirty=0, direct=0)), "t13"))
+    pick = r["picks"][0]["id"]
+    out = pipeline.feedback(r["session_id"], pick, "copy", None, "t13")
+    # extreme-chill sliders must not make a normal pick look "more flirty/forward" than the user wants
+    assert out["raw"]["offsets"]["flirt"] < 0.05 and out["raw"]["offsets"]["escalation"] < 0.05
+
+
+def test_password_and_rate_limit():
+    from fastapi.testclient import TestClient
+
+    from coach import api
+    from coach.config import settings
+    old = (settings.app_password, settings.rate_limit_per_hour)
+    settings.app_password, settings.rate_limit_per_hour = "s3cret", 2
+    api._hits.clear()
+    try:
+        with TestClient(api.app) as c:
+            assert c.get("/api/health").status_code == 200
+            assert c.get("/api/style").status_code == 401
+            h = {"x-app-key": "s3cret"}
+            assert c.get("/api/style", headers=h).status_code == 200
+            body = {"conversation_text": TEASE_CONV}
+            assert c.post("/api/coach", json=body, headers=h).status_code == 200
+            assert c.post("/api/coach", json=body, headers=h).status_code == 200
+            assert c.post("/api/coach", json=body, headers=h).status_code == 429
+    finally:
+        settings.app_password, settings.rate_limit_per_hour = old
+        api._hits.clear()
+
+
+def test_hinge_style_profile_parsing_keeps_prompts_and_photos():
+    from coach.pipeline import split_profile
+    prof = ("Name: Lauren\nAge: 30\nHeight: 5'6\"\nPhoto set\n#\tImage description\tGeneration prompt\n"
+            "2\tBarton Springs photo\tSame fictional woman swimming at Barton Springs in Austin, standing waist deep\n"
+            "Hinge prompts\nTogether we could:\nFind the best margarita in Austin and become way too opinionated about it.\n"
+            "The way to win me over is:\nMake a plan. Pick a place. Tell me what time.")
+    hooks = split_profile(prof)
+    texts = [t for _, t in hooks]
+    assert texts[0].startswith("Together we could: Find the best margarita")
+    assert any(t.startswith("Photo: Barton Springs photo - swimming") for t in texts)
+    assert not any("Photo set" in t or "Image description" in t for t in texts)
+    assert [s for s, _ in hooks][-1] == "basic"  # basics come last
+    r = run(pipeline.coach(CoachRequest(mode="opener", profile_text=prof), "t14"))
+    assert "margarita" in r["state"]["hooks"][0]["text"].lower() or "barton" in r["state"]["hooks"][0]["text"].lower()
+    assert r["stats"]["state_judgments"] == {}  # no conversation questions asked for an opener

@@ -33,6 +33,7 @@ STRATEGIES = [
     "SUGGEST_SPECIFIC_DATE",
     "PULL_BACK",
     "WAIT",
+    "FOLLOW_UP",
     "CLARIFY",
     "END_CONVERSATION",
 ]
@@ -94,6 +95,9 @@ class ConversationState(BaseModel):
     hooks: list[Hook] = Field(default_factory=list)
     last_match_message: str | None = None
     last_speaker: str | None = None
+    # only set when the user sent the last message: why (if at all) they should send another one
+    followup_reason: str | None = None
+    followup_need: float = 0.0
 
 
 class Judgment(BaseModel):

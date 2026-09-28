@@ -25,6 +25,7 @@ STRATEGY_LABEL = {
     "SUGGEST_SPECIFIC_DATE": "Suggest a specific plan",
     "PULL_BACK": "Ease off a bit",
     "WAIT": "Wait before sending anything",
+    "FOLLOW_UP": "Send a quick follow-up",
     "CLARIFY": "Clarify what they meant",
     "END_CONVERSATION": "Wrap it up kindly",
 }
@@ -56,6 +57,8 @@ def conversation_read(state: ConversationState, strategy: str, pronoun: str, mod
         eng_word = "really engaged" if eng >= 0.66 else "engaged" if eng >= 0.45 else "not very engaged right now"
         beh = BEHAVIOR_PHRASE.get(state.match_behavior, "").format(**p)
         summary = f"{p['be'].capitalize()} {eng_word}" + (f" and {beh}." if beh else ".")
+        if state.last_speaker == "user":
+            summary = f"{p['subj'].capitalize()} hasn't replied to your last message yet."
         if state.conversation_momentum == "fading":
             summary += " Momentum is dipping."
         reason = _move_reason(state, strategy, p)
@@ -80,6 +83,11 @@ def _move_reason(state: ConversationState, strategy: str, p: dict) -> str:
         return "The conversation has enough momentum to move it forward."
     if strategy == "CHANGE_TOPIC":
         return "This thread has run its course - give them something easier to reply to."
+    if strategy == "FOLLOW_UP":
+        why = {"fix_mistake": "your last message has a mistake worth fixing",
+               "add_missing_info": "your last message left out something she needs",
+               "answer_skipped": "you never answered something she asked"}.get(state.followup_reason or "", "there's something worth adding")
+        return f"Normally you'd wait for her reply, but {why}. Keep it quick and light."
     if strategy == "WAIT":
         return ("Best move: don't send anything yet - you sent the last message. "
                 "If you really want to follow up, these are the lowest-pressure options.")

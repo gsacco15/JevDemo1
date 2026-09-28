@@ -12,7 +12,7 @@ from .config import settings
 from .jev import EvalItem, HeuristicJudge, make_judge
 from .jev import heuristics as H
 from .parsing import parse_conversation, render_conversation
-from .questions import (RISK_DIMS, CANDIDATE_QUESTIONS, HOOK_APPEARANCE, HOOK_QUESTION, PAIRWISE_QUESTION,
+from .questions import (FOLLOWUP_QUESTION, RISK_DIMS, CANDIDATE_QUESTIONS, HOOK_APPEARANCE, HOOK_QUESTION, PAIRWISE_QUESTION,
                         REASONING_DIMS, STATE_QUESTIONS, STRATEGY_QUESTION)
 from .schemas import (Candidate, CoachRequest, ConversationState, Hook, Message, Sliders, StyleProfile)
 
@@ -107,15 +107,65 @@ def render_context(mode: str, messages: list[Message], profile: str | None, stat
 # 1. state
 # ---------------------------------------------------------------------------
 
+BASIC_KEYS = {"name", "age", "location", "job", "work", "education", "school", "height", "dating intention", "politics",
+              "drinking", "drinks", "smoking", "smokes", "exercise", "hometown", "religion", "religious beliefs", "kids",
+              "children", "family plans", "pets", "zodiac", "star sign", "languages", "gender", "pronouns", "sexuality",
+              "relationship type", "ethnicity", "weed", "drugs", "covid vaccine"}
+SECTION_HEADERS = {"photo set", "photos", "hinge prompts", "prompts", "profile", "basics", "vitals", "about", "about me",
+                   "#", "image description", "generation prompt"}
+# strip image-generation boilerplate like "Photorealistic ... of a fictional 30 year old woman living in Austin Texas,"
+PHOTO_BOILERPLATE = re.compile(r"^.*?\bfictional\b.*?\b(woman|man|person|guy|girl)\b(\s+(living|based)\s+in\s+[^,]+)?[,\s]*", re.I)
+
+
+def _photo_line(desc: str, detail: str) -> str:
+    """'Barton Springs photo' + 'Same fictional woman swimming at Barton Springs in Austin, standing...' ->
+    'Photo: Barton Springs photo - swimming at Barton Springs in Austin, standing waist deep'."""
+    detail = PHOTO_BOILERPLATE.sub("", detail or "").strip(" ,")
+    clauses = [c.strip() for c in detail.split(",") if c.strip()][:2]
+    words = " ".join(", ".join(clauses).split()[:18])
+    return f"Photo: {desc}" + (f" - {words}" if words else "")
+
+
 def split_profile(profile: str) -> list[tuple[str, str]]:
-    out = []
-    for line in re.split(r"[\n]+|(?<=[.!?])\s+", profile or ""):
-        line = line.strip(" -•\t")
-        if len(line.split()) < 2:
+    """Profile text -> hook candidates. Understands pasted Hinge-style profiles: basics ('Age: 30'), prompts with
+    the answer on the same or next line, photo lines ('Photo: ...') and tab-separated photo tables."""
+    lines = [l.strip() for l in (profile or "").splitlines()]
+    prompts, photos, basics = [], [], []
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip(" -•|\t"); i += 1
+        if not line:
             continue
-        src = "photo" if line.lower().startswith(("photo", "pic", "image")) else "prompt"
-        out.append((src, re.sub(r"^(photo|pic|image)\s*[:\-]\s*", "", line, flags=re.I)))
-    return out[:12]
+        low = line.lower().rstrip(":").strip()
+        if low in SECTION_HEADERS or low.startswith("# ") or "image description" in low:
+            continue
+        row = re.match(r"^(\d+)[.)]?\s+(.+)$", line)
+        if row and ("\t" in lines[i - 1] or re.search(r"\bphoto\b", line, re.I)):
+            cols = [c.strip() for c in re.split(r"\t+|\s{3,}", row.group(2)) if c.strip()]
+            photos.append(("photo", _photo_line(cols[0], cols[1] if len(cols) > 1 else "")))
+            continue
+        if low.startswith(("photo:", "pic:", "image:")):
+            photos.append(("photo", "Photo: " + line.split(":", 1)[1].strip()))
+            continue
+        if ":" in line:
+            key, val = (x.strip() for x in line.split(":", 1))
+            if key.lower() in BASIC_KEYS:
+                if val:
+                    basics.append(("basic", f"{key}: {val}"))
+                continue
+            if not val:  # prompt on its own line, answer on the next
+                nxt = lines[i].strip() if i < len(lines) else ""
+                if nxt and ":" not in nxt:
+                    prompts.append(("prompt", f"{key}: {nxt}")); i += 1
+                continue
+            prompts.append(("prompt", f"{key}: {val}"))
+            continue
+        if len(line.split()) >= 3:
+            for sent in re.split(r"(?<=[.!?])\s+", line):
+                if len(sent.split()) >= 3:
+                    prompts.append(("prompt", sent))
+    # prompts and photos make the best openers; basics come last and are capped
+    return (prompts + photos)[:14] + basics[:4]
 
 
 async def extract_hooks(profile: str, context: str) -> tuple[list[Hook], int]:
@@ -142,8 +192,13 @@ async def build_state(mode: str, messages: list[Message], profile: str | None, s
                       platform: str) -> tuple[ConversationState, dict, int]:
     md = _msgs_dicts(messages)
     ctx = render_context(mode, messages, profile, None, style)
-    res = (await judge.judge([EvalItem("state", ctx, {"kind": "state", "messages": md, "profile": profile, "mode": mode})],
-                             STATE_QUESTIONS))["state"]
+    user_sent_last = bool(messages) and messages[-1].speaker == "user" and mode == "reply"
+    questions = STATE_QUESTIONS + ([FOLLOWUP_QUESTION] if user_sent_last else [])
+    if mode == "opener" and not messages:
+        res = {}  # no conversation yet: judging "her engagement" or "momentum" would be noise
+    else:
+        res = (await judge.judge([EvalItem("state", ctx, {"kind": "state", "messages": md, "profile": profile, "mode": mode})],
+                                 questions))["state"]
     n_judgments = len(res)
 
     recent = messages[-6:]
@@ -182,6 +237,10 @@ async def build_state(mode: str, messages: list[Message], profile: str | None, s
         last_match_message=last_match,
         last_speaker=messages[-1].speaker if messages else None,
     )
+    if "followup_reason" in res:
+        fr = res["followup_reason"]
+        state.followup_need = round(1 - fr.probs.get("none", 0.0), 3)
+        state.followup_reason = fr.choice if state.followup_need >= 0.5 else "none"
     if mode == "opener":
         state.stage = "PROFILE_OPENER"
     if profile:
@@ -208,7 +267,7 @@ async def choose_strategy(mode: str, messages, profile, state: ConversationState
         probs["ASK_FOR_DATE"] *= 0.3
     # (6) early conversations damp asks - unless she's clearly into it or already talking plans
     hot = state.flirt_level >= 0.6 and state.escalation_readiness >= 0.4
-    if state.message_count < 6 and not hot and state.match_behavior != "logistics":
+    if mode == "reply" and state.message_count < 6 and not hot and state.match_behavior != "logistics":
         for k in ("ASK_FOR_NUMBER", "ASK_FOR_DATE", "SUGGEST_SPECIFIC_DATE"):
             probs[k] = probs.get(k, 0) * 0.3
         rules.append("early conversation -> damp number/date asks")
@@ -217,11 +276,18 @@ async def choose_strategy(mode: str, messages, profile, state: ConversationState
         if m.speaker != "user":
             break
         trailing_user += 1
-    if trailing_user >= 2:
-        # already double-texted: another message almost never helps
-        probs["WAIT"] = probs.get("WAIT", 0) + 0.9
-        probs["PULL_BACK"] = probs.get("PULL_BACK", 0) + 0.2
-        rules.append("user already double-texted -> favour WAIT / PULL_BACK")
+    # (1) whose turn is it? if the user sent last, Jev decides whether there's any reason to send more
+    if trailing_user >= 1 and mode == "reply":
+        if state.followup_reason and state.followup_reason != "none":
+            probs["FOLLOW_UP"] = probs.get("FOLLOW_UP", 0) + 1.0
+            probs["WAIT"] = probs.get("WAIT", 0) * 0.3
+            rules.append(f"you sent last, but Jev sees a reason to follow up ({human_move(state.followup_reason)})")
+        else:
+            probs["WAIT"] = probs.get("WAIT", 0) + 1.0 + 0.5 * (trailing_user >= 2)
+            probs["FOLLOW_UP"] = 0
+            rules.append("you sent last and there's no reason to send more -> wait for her reply")
+    else:
+        probs["FOLLOW_UP"] = 0
     if mode == "opener":
         for k in list(probs):
             if k not in ("TEASE", "ASK_QUESTION", "CONTINUE_TOPIC", "FLIRT"):
@@ -261,6 +327,7 @@ def _gen_ctx(mode, messages, profile, state, strategy, alts, style, sliders, n, 
         "strategy": strategy, "alt_strategies": alts, "style": style.model_dump(),
         "sliders": sliders.model_dump(), "n": n, "hooks": [h.model_dump() for h in state.hooks],
         "last_match": state.last_match_message, "avoid_texts": avoid,
+        "last_speaker": state.last_speaker, "followup_reason": state.followup_reason,
     }
 
 
@@ -714,7 +781,8 @@ def feedback(session_id: str, candidate_id: str, kind: str, edited_text: str | N
         raise CoachError("Unknown suggestion.")
     style, prefs = _load_user(user_id)
     state = ConversationState(**sess["state"])
-    desired = ranking.desired_state(state, sess["strategy_info"]["chosen"], style, Sliders(**sess["sliders"]), prefs)
+    # sliders are a temporary intent, so learning compares against the neutral target
+    desired = ranking.desired_state(state, sess["strategy_info"]["chosen"], style, Sliders(), prefs)
     prefs = personalization.update(prefs, kind, cand.features, desired, cand.components, edited_text, cand.text)
     # what the user actually sends is the best evidence of their voice
     if kind in ("copy", "edited", "select"):

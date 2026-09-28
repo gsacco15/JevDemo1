@@ -1,11 +1,14 @@
 """HTTP API. Run: uvicorn coach.api:app --reload"""
 
+import hmac
+import time
+from collections import defaultdict, deque
 from pathlib import Path
 
-from fastapi import FastAPI, File, Header, HTTPException, UploadFile
+from fastapi import FastAPI, File, Header, HTTPException, Request, UploadFile
 import json
 
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from . import llm, personalization, pipeline, store
 from .config import settings
@@ -13,6 +16,36 @@ from .schemas import CoachRequest, FeedbackRequest, RerankRequest, StyleProfile
 
 app = FastAPI(title="Jev Dating Message Coach", version="0.1.0")
 STATIC = Path(__file__).resolve().parent.parent / "public"
+
+# endpoints that spend model credits
+EXPENSIVE = {"/api/coach", "/api/coach/stream", "/api/regenerate", "/api/parse-screenshot", "/api/jev-check"}
+OPEN = {"/api/health"}
+_hits: dict[str, deque] = defaultdict(deque)
+
+
+def client_ip(request: Request) -> str:
+    fwd = request.headers.get("x-forwarded-for", "")
+    return fwd.split(",")[0].strip() or (request.client.host if request.client else "unknown")
+
+
+@app.middleware("http")
+async def guard(request: Request, call_next):
+    path = request.url.path
+    if path.startswith("/api/") and path not in OPEN:
+        if settings.app_password:
+            given = request.headers.get("x-app-key", "")
+            if not hmac.compare_digest(given.encode(), settings.app_password.encode()):
+                return JSONResponse({"detail": "password required", "locked": True}, status_code=401)
+        if path in EXPENSIVE and settings.rate_limit_per_hour > 0:
+            q, now = _hits[client_ip(request)], time.time()
+            while q and now - q[0] > 3600:
+                q.popleft()
+            if len(q) >= settings.rate_limit_per_hour:
+                wait = int(3600 - (now - q[0])) // 60 + 1
+                return JSONResponse({"detail": f"Rate limit reached ({settings.rate_limit_per_hour} searches/hour). Try again in ~{wait} min."},
+                                    status_code=429)
+            q.append(now)
+    return await call_next(request)
 
 
 def uid(x_user_id: str | None) -> str:
@@ -32,7 +65,8 @@ def index():
 def health():
     return {"ok": True, "backends": pipeline.backends(), "num_candidates": settings.num_candidates,
             "confidence_policy": {"auto": settings.conf_auto, "escalate_below": settings.conf_escalate},
-            "retention_hours": settings.retention_hours, "screenshots": settings.use_claude}
+            "retention_hours": settings.retention_hours, "screenshots": settings.use_claude,
+            "locked": bool(settings.app_password), "rate_limit_per_hour": settings.rate_limit_per_hour}
 
 
 @app.get("/api/jev-check")

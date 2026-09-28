@@ -116,7 +116,18 @@ input[type=range]::-moz-range-thumb { width: 12px; height: 12px; border-radius: 
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); }
 .thread { display: grid; grid-template-columns: minmax(0, 1fr) 260px; }
 @media (max-width: 760px) { .thread { grid-template-columns: minmax(0, 1fr); } }
-.thread-body { padding: 18px 20px; min-height: 180px; max-height: 360px; overflow-y: auto; display: flex; flex-direction: column; gap: 5px; scrollbar-width: thin; }
+.thread-wrap { position: relative; min-width: 0; }
+.thread-body { padding: 18px 20px; min-height: 180px; max-height: min(460px, 60vh); overflow-y: auto; display: flex; flex-direction: column; gap: 5px;
+  scrollbar-width: thin; scrollbar-color: var(--line-2) transparent; overscroll-behavior: contain; }
+.thread-body > * { flex-shrink: 0; }
+.thread.expanded .thread-body { max-height: none; }
+.thread-body::-webkit-scrollbar { width: 8px; } .thread-body::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 8px; border: 2px solid var(--surface); }
+.thread-body.more-above { -webkit-mask-image: linear-gradient(transparent 0, #000 56px); mask-image: linear-gradient(transparent 0, #000 56px); }
+.earlier { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 2; font: 400 11px var(--mono); padding: 4px 10px; border-radius: 999px;
+  background: var(--surface); border: 1px solid var(--line-2); color: var(--muted); cursor: pointer; }
+.earlier:hover { color: var(--ink); border-color: var(--ink-2); }
+.xbtn { background: none; border: none; padding: 0; font: 400 11.5px var(--mono); color: var(--muted); cursor: pointer; margin-left: 12px; }
+.xbtn:hover { color: var(--ink); }
 .thread-meta { border-left: 1px solid var(--line); padding: 18px 20px; display: flex; flex-direction: column; gap: 12px; }
 @media (max-width: 760px) { .thread-meta { border-left: none; border-top: 1px solid var(--line); } }
 .who { display: flex; align-items: center; gap: 10px; }
@@ -402,9 +413,10 @@ h5.t { font-size: 12.5px; margin: 18px 0 8px; }
   <!-- ================= CANVAS ================= -->
   <main class="canvas"><div class="canvas-in">
     <section class="sec">
-      <div class="sec-h"><h2><small>01</small><span id="sec1">Conversation</span></h2><span class="aside" id="thread-aside">preview</span></div>
-      <div class="card thread">
-        <div class="thread-body" id="ph-body"></div>
+      <div class="sec-h"><h2><small>01</small><span id="sec1">Conversation</span></h2><span class="aside"><span id="thread-aside">preview</span><button class="xbtn" id="xbtn" onclick="toggleExpand()">expand</button></span></div>
+      <div class="card thread" id="thread">
+        <div class="thread-wrap"><button class="earlier hidden" id="earlier" onclick="$('ph-body').scrollTo({ top: 0, behavior: 'smooth' })"></button>
+          <div class="thread-body" id="ph-body" onscroll="threadScrollState()"></div></div>
         <div class="thread-meta">
           <div class="who"><div class="av" id="ph-av">?</div><div><b id="ph-name">Your match</b><span id="ph-sub">hinge</span></div></div>
           <div class="kv"><span id="k-count">Messages</span><b id="m-count">0</b></div>
@@ -542,9 +554,12 @@ function loadScenario(i) {
   setMode(s.mode); $("pronoun").value = "she";
   if (s.mode === "opener") $("profile").value = s.text; else { $("conv").value = s.text; $("profile").value = ""; showProfile(false); }
   activeScenario = s; draftText = null; $("scenario").value = "";
+  autoGrow($("conv")); autoGrow($("profile"));
   renderThread(); toast(`Loaded "${s.name}"`);
 }
+function autoGrow(el) { el.style.height = "auto"; el.style.height = Math.min(Math.max(el.scrollHeight + 2, 150), Math.round(innerHeight * 0.4)) + "px"; }
 function onConvInput() {
+  autoGrow($("conv")); autoGrow($("profile"));
   if (activeScenario && (activeScenario.mode === "opener" ? $("profile").value : $("conv").value) !== activeScenario.text) activeScenario = null;
   draftText = null; renderThread();
 }
@@ -614,6 +629,24 @@ function renderThread(typing = false) {
   }
   $("thread-aside").textContent = draftText ? "best pick shown as a draft" : typing ? "searching…" : "preview";
   body.scrollTop = body.scrollHeight;
+  threadScrollState();
+}
+function threadScrollState() {
+  const body = $("ph-body"), btn = $("earlier");
+  const overflow = body.scrollHeight > body.clientHeight + 4, above = overflow && body.scrollTop > 8;
+  body.classList.toggle("more-above", above);
+  $("xbtn").classList.toggle("hidden", !overflow && !$("thread").classList.contains("expanded"));
+  if (above) {  // count the bubbles scrolled out of view above
+    const top = body.getBoundingClientRect().top;
+    const hidden = [...body.querySelectorAll(".bb, .prompt-c, .photo-r")].filter(el => el.getBoundingClientRect().bottom < top + 20).length;
+    btn.textContent = `↑ ${hidden} earlier`; btn.classList.toggle("hidden", !hidden);
+  } else btn.classList.add("hidden");
+}
+function toggleExpand() {
+  const t = $("thread"), on = t.classList.toggle("expanded");
+  $("xbtn").textContent = on ? "collapse" : "expand";
+  if (!on) { $("ph-body").scrollTop = $("ph-body").scrollHeight; }
+  threadScrollState();
 }
 function draftHTML(typing) {
   if (typing) return `<div class="typing"><i></i><i></i><i></i></div>`;

@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jev Message Coach</title>
+<style>
+:root {
+  --bg: #f6f5f2; --panel: #ffffff; --ink: #1d1c1a; --muted: #6b6860; --line: #e4e1da;
+  --accent: #b4235a; --accent-ink: #ffffff; --chip: #f1ede6; --good: #1f7a4d; --warn: #b26a00; --bad: #b3261e;
+  --bar: #d9d4ca; --bar-fill: #3b3a36; --shadow: 0 1px 2px rgba(0,0,0,.05), 0 4px 16px rgba(0,0,0,.04);
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #151514; --panel: #1f1e1c; --ink: #eeebe5; --muted: #a39f96; --line: #33312d;
+    --accent: #e0527f; --chip: #2a2926; --bar: #3a3834; --bar-fill: #d8d3c9; --shadow: none; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 14px 20px; border-bottom: 1px solid var(--line); }
+header h1 { font-size: 17px; margin: 0; letter-spacing: -.01em; }
+header .tag { color: var(--muted); font-size: 13px; }
+header .badges { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
+.badge { font-size: 12px; padding: 3px 8px; border-radius: 999px; background: var(--chip); color: var(--muted); }
+.badge b { color: var(--ink); font-weight: 600; }
+main { display: grid; grid-template-columns: minmax(300px, 400px) 1fr; gap: 20px; padding: 20px; max-width: 1280px; margin: 0 auto; }
+main > section { min-width: 0; }
+@media (max-width: 860px) { main { grid-template-columns: minmax(0, 1fr); padding: 16px; } }
+@media (max-width: 480px) { .slider { grid-template-columns: 64px 1fr 64px; } .msg { font-size: 17px; } }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; box-shadow: var(--shadow); }
+.stack { display: flex; flex-direction: column; gap: 14px; }
+label.lbl { display: block; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: 6px; }
+textarea, input[type=text], select { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px;
+  background: var(--bg); color: var(--ink); font: inherit; }
+textarea { resize: vertical; min-height: 120px; }
+button { font: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 7px 12px; }
+button:hover { border-color: var(--muted); }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; padding: 10px 14px; width: 100%; }
+button.primary:disabled { opacity: .6; cursor: wait; }
+button.small { font-size: 13px; padding: 5px 9px; }
+button.link { border: none; background: none; color: var(--muted); padding: 0; text-decoration: underline; font-size: 13px; }
+.tabs { display: flex; gap: 6px; }
+.tabs button { flex: 1; }
+.tabs button.on { background: var(--ink); color: var(--panel); border-color: var(--ink); }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.muted { color: var(--muted); font-size: 13px; }
+.slider { display: grid; grid-template-columns: 78px 1fr 78px; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+.slider span:last-child { text-align: right; }
+input[type=range] { width: 100%; accent-color: var(--accent); }
+.read h2 { font-size: 19px; margin: 0 0 8px; letter-spacing: -.01em; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { background: var(--chip); border-radius: 999px; padding: 3px 10px; font-size: 13px; }
+.chip b { font-weight: 600; }
+.pick { border: 1px solid var(--line); border-radius: 12px; padding: 16px; background: var(--panel); box-shadow: var(--shadow); }
+.pick.best { border-color: var(--accent); }
+.slot { font-size: 11px; font-weight: 700; letter-spacing: .08em; color: var(--accent); }
+.msg { font-size: 19px; margin: 6px 0 8px; line-height: 1.35; }
+.why { color: var(--muted); font-size: 14px; margin-bottom: 10px; }
+.scores { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 4px 14px; margin: 10px 0; }
+.sc { display: grid; grid-template-columns: 92px 1fr 26px; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); }
+.sc .bar { height: 5px; background: var(--bar); border-radius: 3px; overflow: hidden; }
+.sc .bar i { display: block; height: 100%; background: var(--bar-fill); }
+.sc.risk .bar i { background: var(--warn); }
+.sc span:last-child { text-align: right; color: var(--ink); font-variant-numeric: tabular-nums; }
+.fb { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.fb button.done { background: var(--chip); color: var(--muted); }
+.banner { border: 1px dashed var(--warn); color: var(--warn); border-radius: 10px; padding: 10px 12px; display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.error { color: var(--bad); font-size: 14px; }
+details { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); padding: 10px 14px; }
+details summary { cursor: pointer; font-weight: 600; }
+.statgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; margin: 10px 0; }
+.stat { background: var(--chip); border-radius: 8px; padding: 8px 10px; }
+.stat .n { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.stat .l { font-size: 12px; color: var(--muted); }
+.tablewrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 600; font-size: 12px; white-space: nowrap; }
+td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+tr.rej td { color: var(--muted); }
+tr.rej td.txt { text-decoration: line-through; }
+td.txt { min-width: 260px; }
+.why-rej { color: var(--bad); font-size: 12px; }
+pre { background: var(--chip); padding: 10px; border-radius: 8px; overflow: auto; font-size: 12px; max-height: 320px; }
+.probbar { display: grid; grid-template-columns: 170px 1fr 40px; gap: 8px; align-items: center; font-size: 12px; }
+.probbar .bar { height: 7px; background: var(--bar); border-radius: 4px; overflow: hidden; }
+.probbar .bar i { display: block; height: 100%; background: var(--accent); }
+.empty { text-align: center; color: var(--muted); padding: 50px 20px; }
+.toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--panel);
+  padding: 8px 14px; border-radius: 8px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+.toast.on { opacity: 1; }
+.hidden { display: none !important; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Jev Message Coach</h1>
+  <span class="tag">Find the strongest message that still sounds like you.</span>
+  <div class="badges" id="badges"></div>
+</header>
+
+<main>
+  <!-- LEFT: input + controls -->
+  <section class="stack">
+    <div class="panel stack">
+      <div class="tabs">
+        <button id="tab-reply" class="on" onclick="setMode('reply')">Reply to a message</button>
+        <button id="tab-opener" onclick="setMode('opener')">Create an opener</button>
+      </div>
+
+      <div id="conv-wrap">
+        <label class="lbl" for="conv">Conversation</label>
+        <textarea id="conv" placeholder="Me: ok but I'm dangerously good at go karts&#10;Her: Lol you definitely couldn't keep up"></textarea>
+        <div class="muted">One message per line. "Me:" is you; any other label (Her, Him, Them, a name) is the match.</div>
+      </div>
+
+      <div id="profile-wrap">
+        <label class="lbl" for="profile">Their profile <span id="profile-opt" style="text-transform:none;font-weight:400">(optional)</span></label>
+        <textarea id="profile" style="min-height:80px" placeholder="I get way too competitive at Mario Kart.&#10;Photo: hiking in Patagonia&#10;My dog Biscuit is my whole personality"></textarea>
+      </div>
+
+      <div class="row">
+        <label class="muted" for="shot">Screenshot:</label>
+        <input type="file" id="shot" accept="image/png,image/jpeg,image/webp" onchange="uploadShot(this)" style="flex:1;min-width:0">
+      </div>
+      <div class="muted" id="shot-note"></div>
+
+      <div class="row">
+        <label class="muted" for="pronoun">Match pronoun</label>
+        <select id="pronoun" style="width:auto">
+          <option value="she">she</option><option value="he">he</option><option value="they" selected>they</option>
+        </select>
+        <span style="flex:1"></span>
+        <button class="link" onclick="loadExample()">Load an example</button>
+      </div>
+
+      <button class="primary" id="go" onclick="run()">Coach me</button>
+      <div class="error" id="err"></div>
+    </div>
+
+    <div class="panel stack">
+      <label class="lbl">Tone</label>
+      <div id="sliders"></div>
+      <div class="muted" id="rerank-note">Sliders re-rank the existing candidate pool instantly (no new model calls).</div>
+    </div>
+
+    <details class="panel" id="style-panel">
+      <summary>Your style</summary>
+      <div class="stack" style="margin-top:12px">
+        <div class="row">
+          <label class="muted" style="width:130px">Message length</label>
+          <select id="st-len" style="flex:1"><option>short</option><option>medium</option><option>long</option></select>
+        </div>
+        <div class="slider"><span>Indirect</span><input type="range" id="st-direct" min="0" max="1" step="0.05"><span>Direct</span></div>
+        <div class="slider"><span>Not flirty</span><input type="range" id="st-flirt" min="0" max="1" step="0.05"><span>Flirty</span></div>
+        <div class="slider"><span>No emoji</span><input type="range" id="st-emoji" min="0" max="1" step="0.05"><span>Lots</span></div>
+        <div>
+          <label class="lbl" for="st-humor">Humor style</label>
+          <input type="text" id="st-humor" placeholder="dry, teasing">
+        </div>
+        <div class="row" id="st-avoids"></div>
+        <div>
+          <label class="lbl" for="st-samples">Messages you've actually sent (one per line)</label>
+          <textarea id="st-samples" style="min-height:80px" placeholder="lol ok that's fair&#10;wait you've been to Lisbon too?"></textarea>
+        </div>
+        <button onclick="saveStyle()">Save style</button>
+        <div>
+          <label class="lbl">Learned from your feedback</label>
+          <ul id="learned" class="muted" style="margin:0;padding-left:18px"></ul>
+          <button class="link" onclick="resetPrefs()">Reset learned preferences</button>
+        </div>
+      </div>
+    </details>
+
+    <div class="panel stack">
+      <label class="lbl">Privacy</label>
+      <div class="muted">Sessions expire automatically. Screenshots are processed in memory and never stored.</div>
+      <div class="row">
+        <button class="small" onclick="deleteSession()">Delete this conversation</button>
+        <button class="small" onclick="deleteAll()">Delete all my data</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- RIGHT: results -->
+  <section class="stack" id="results">
+    <div class="panel empty" id="empty">Paste a conversation (or a profile for an opener) and hit <b>Coach me</b>.<br>
+      Behind the scenes it generates ~30 candidates, runs hundreds of narrow Jev judgments, and shows you the best three.</div>
+  </section>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+const SLIDERS = [
+  ["bold", "Chill", "Bold"], ["flirty", "Friendly", "Flirty"], ["serious", "Playful", "Serious"],
+  ["direct", "Safe", "Direct"], ["expressive", "Short", "Expressive"],
+];
+const AVOIDS = [["pickup_line_style", "pickup lines"], ["long_explanations", "long explanations"], ["excessive_emojis", "lots of emojis"]];
+const FB_BUTTONS = [["like", "👍"], ["dislike", "👎"], ["too_much", "Too much"], ["too_boring", "Too boring"],
+  ["too_cheesy", "Too cheesy"], ["not_me", "Doesn't sound like me"], ["too_long", "Too long"]];
+const RISK = new Set(["Cringe risk", "Neediness", "Genericness"]);
+let mode = "reply", session = null, last = null, rerankTimer = null, health = null;
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+function toast(msg) { const t = $("toast"); t.textContent = msg; t.classList.add("on"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("on"), 1600); }
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.detail || res.statusText);
+  return body;
+}
+
+function sliders() { const o = {}; for (const [k] of SLIDERS) o[k] = parseFloat($("sl-" + k).value); return o; }
+
+function buildSliders() {
+  $("sliders").innerHTML = SLIDERS.map(([k, a, b]) =>
+    `<div class="slider"><span>${a}</span><input type="range" id="sl-${k}" min="0" max="1" step="0.05" value="0.5" oninput="onSlide()" aria-label="${a} to ${b}"><span>${b}</span></div>`).join("");
+}
+
+function setMode(m) {
+  mode = m;
+  $("tab-reply").classList.toggle("on", m === "reply");
+  $("tab-opener").classList.toggle("on", m === "opener");
+  $("conv-wrap").classList.toggle("hidden", m === "opener");
+  $("profile-opt").textContent = m === "opener" ? "(required)" : "(optional)";
+}
+
+function loadExample() {
+  if (mode === "reply") {
+    $("conv").value = "Me: ok but I'm dangerously good at go karts\nHer: Lol you definitely couldn't keep up";
+    $("pronoun").value = "she";
+  } else {
+    $("profile").value = "I get way too competitive at Mario Kart.\nPhoto: hiking in Patagonia\nMy dog Biscuit is my whole personality\nPhoto: you're cute";
+    $("pronoun").value = "she";
+  }
+}
+
+async function run() {
+  $("err").textContent = ""; $("go").disabled = true; $("go").textContent = "Searching candidates…";
+  try {
+    const body = { mode, conversation_text: $("conv").value, profile_text: $("profile").value,
+                   sliders: sliders(), match_pronoun: $("pronoun").value };
+    const r = await api("/api/coach", { method: "POST", body: JSON.stringify(body) });
+    session = r.session_id; render(r);
+  } catch (e) { $("err").textContent = e.message; }
+  finally { $("go").disabled = false; $("go").textContent = "Coach me"; }
+}
+
+function onSlide() {
+  if (!session) return;
+  clearTimeout(rerankTimer);
+  rerankTimer = setTimeout(async () => {
+    try {
+      const r = await api("/api/rerank", { method: "POST", body: JSON.stringify({ session_id: session, sliders: sliders() }) });
+      render(r);
+      $("rerank-note").textContent = `Re-ranked ${r.stats.generated} candidates in ${r.stats.timings_ms.total} ms · 0 new model calls.`;
+    } catch (e) { $("err").textContent = e.message; }
+  }, 90);
+}
+
+async function regenerate() {
+  const btn = $("regen"); if (btn) { btn.disabled = true; btn.textContent = "Generating…"; }
+  try {
+    const r = await api("/api/regenerate", { method: "POST", body: JSON.stringify({ session_id: session, sliders: sliders() }) });
+    render(r); toast(`Added ${r.stats.new_candidates} new candidates`);
+  } catch (e) { $("err").textContent = e.message; }
+}
+
+async function fb(id, kind, btn, extra = {}) {
+  try {
+    const r = await api("/api/feedback", { method: "POST", body: JSON.stringify({ session_id: session, candidate_id: id, kind, ...extra }) });
+    if (btn) btn.classList.add("done");
+    renderLearned(r.preferences);
+    toast({copy: "Copied - noted as your pick", like: "Noted 👍", dislike: "Noted 👎", edited: "Saved your edit"}[kind] || "Got it - adjusting");
+  } catch (e) { $("err").textContent = e.message; }
+}
+
+async function copyPick(id, text, btn) {
+  try { await navigator.clipboard.writeText(text); } catch (_) {}
+  fb(id, "copy", btn);
+}
+
+function editPick(id, text) {
+  const edited = prompt("Edit it the way you'd actually send it:", text);
+  if (edited && edited.trim() && edited.trim() !== text) fb(id, "edited", null, { edited_text: edited.trim() });
+}
+
+function scoreBars(scores) {
+  return `<div class="scores">` + Object.entries(scores).map(([k, v]) =>
+    `<div class="sc ${RISK.has(k) ? "risk" : ""}"><span>${esc(k)}</span><div class="bar"><i style="width:${v}%"></i></div><span>${v}</span></div>`).join("") + `</div>`;
+}
+
+function render(r) {
+  last = r;
+  const rd = r.read;
+  const picks = r.picks.map(p => `
+    <article class="pick ${p.slot === "BEST" ? "best" : ""}">
+      <div class="slot">${esc(p.slot === "BEST" ? "BEST" : p.slot === "BOLDER" ? "BOLDER" : p.slot === "CHILLER" ? "MORE RELAXED" : "ALTERNATIVE")}</div>
+      <div class="msg">${esc(p.text)}</div>
+      <div class="why">${esc(p.why)}</div>
+      <div class="chips">${p.labels.map(l => `<span class="chip">${esc(l)}</span>`).join("")}</div>
+      ${scoreBars(p.scores)}
+      <div class="fb" data-id="${esc(p.id)}">
+        <button class="small" data-act="copy">Copy</button>
+        <button class="small" data-act="edit">Edit</button>
+        ${FB_BUTTONS.map(([k, l]) => `<button class="small" data-act="${k}">${l}</button>`).join("")}
+      </div>
+    </article>`).join("");
+
+  const s = r.stats;
+  const statItems = [
+    [s.generated, "candidates generated"], [s.rejected, "hard-rejected"], [s.finalists, "tournament finalists"],
+    [s.jev_judgments, "Jev judgments"], [s.pairwise_comparisons, "pairwise comparisons"],
+    [s.low_confidence_judgments ?? "–", "low-confidence judgments"], [s.escalated_to_reasoning ?? "–", "escalated to reasoning"],
+    [(s.timings_ms.total ?? "–") + " ms", "total time"],
+  ];
+  const probs = Object.entries(r.strategy.probs || {}).map(([k, v]) =>
+    `<div class="probbar"><span>${esc(k)}</span><div class="bar"><i style="width:${Math.round(v*100)}%"></i></div><span>${Math.round(v*100)}%</span></div>`).join("");
+  const rows = r.pool.map(c => `
+    <tr class="${c.rejected ? "rej" : ""}">
+      <td class="num">${c.rejected ? "–" : c.final.toFixed(1)}</td>
+      <td class="txt">${esc(c.text)}${c.rejected ? `<div class="why-rej">✕ ${esc(c.reject_reasons.join(", "))}</div>` : ""}</td>
+      <td>${esc(c.intended_strategy || "")}</td>
+      <td class="num">${c.total.toFixed(1)}</td>
+      <td class="num">${c.pairwise_winrate == null ? "" : Math.round(c.pairwise_winrate*100) + "%"}</td>
+      <td class="num">${c.boldness.toFixed(2)}</td>
+      <td class="num">${Math.round(c.components.context_fit*100)}</td>
+      <td class="muted">${esc(Object.entries(c.penalties).map(([k,v]) => `${k} −${v}`).join(", "))}</td>
+      <td class="muted">${c.escalated.length ? "↑ " + esc(c.escalated.join(", ")) : c.low_confidence.length ? "? " + esc(c.low_confidence.join(", ")) : ""}</td>
+    </tr>`).join("");
+
+  $("results").innerHTML = `
+    <div class="panel read">
+      <h2>${esc(rd.summary)}</h2>
+      <div class="chips" style="margin-bottom:8px">
+        <span class="chip">Vibe: <b>${esc(rd.vibe)}</b></span>
+        <span class="chip">Momentum: <b>${esc(rd.momentum)}</b></span>
+        <span class="chip">Recommended move: <b>${esc(rd.recommended_move)}</b></span>
+        <span class="chip">Escalation: <b>${esc(rd.escalation)}</b></span>
+      </div>
+      <div class="muted">${esc(rd.move_reason)}</div>
+    </div>
+    ${r.pool_exhausted ? `<div class="banner"><span>Nothing in the current pool fits these settings well.</span><button id="regen" onclick="regenerate()">Generate more like this</button></div>` : ""}
+    ${r.notes.map(n => `<div class="banner">${esc(n)}</div>`).join("")}
+    ${picks || `<div class="panel empty">Every candidate was rejected - try regenerating.</div>`}
+    <div class="row"><button class="small" onclick="regenerate()">Search more candidates</button>
+      <span class="muted">Session ${esc(r.session_id)}</span></div>
+    <details>
+      <summary>Under the hood</summary>
+      <div class="statgrid">${statItems.map(([n, l]) => `<div class="stat"><div class="n">${esc(n)}</div><div class="l">${esc(l)}</div></div>`).join("")}</div>
+      <div class="muted">Backends: judge <b>${esc(s.backends.judge)}</b> · generator <b>${esc(s.backends.generator)}</b> · reasoning <b>${esc(s.backends.reasoning)}</b>
+        · stage timings ${esc(Object.entries(s.timings_ms).map(([k,v]) => `${k} ${v}ms`).join(" · "))}</div>
+      <h4>Strategy (Jev choice + rules) - ${esc(r.strategy.chosen)} @ confidence ${esc(r.strategy.confidence)}</h4>
+      ${probs}
+      ${r.strategy.rules_applied?.length ? `<div class="muted">Rules: ${esc(r.strategy.rules_applied.join("; "))}</div>` : ""}
+      <h4>All candidates</h4>
+      <div class="tablewrap"><table>
+        <thead><tr><th>Final</th><th>Candidate</th><th>Move</th><th>Score</th><th>Pairwise</th><th>Boldness</th><th>Tone fit</th><th>Penalties</th><th>Confidence</th></tr></thead>
+        <tbody>${rows}</tbody></table></div>
+      <div class="muted">Confidence column: “?” = low-confidence Jev judgments (down-weighted), “↑” = escalated to the reasoning model.</div>
+      <h4>Conversation state</h4><pre>${esc(JSON.stringify(r.state, null, 2))}</pre>
+      <h4>Desired state (targets the ranking aims for)</h4><pre>${esc(JSON.stringify(r.desired_state, null, 2))}</pre>
+    </details>`;
+}
+
+document.addEventListener("click", e => {
+  const btn = e.target.closest(".fb button"); if (!btn || !last) return;
+  const id = btn.parentElement.dataset.id, act = btn.dataset.act;
+  const pick = last.picks.find(p => p.id === id); if (!pick) return;
+  if (act === "copy") copyPick(id, pick.text, btn);
+  else if (act === "edit") editPick(id, pick.text);
+  else fb(id, act, btn);
+});
+
+function renderLearned(lines) { $("learned").innerHTML = lines.map(l => `<li>${esc(l)}</li>`).join(""); }
+
+async function loadStyle() {
+  const r = await api("/api/style");
+  const st = r.style;
+  $("st-len").value = st.average_message_length; $("st-direct").value = st.preferred_directness;
+  $("st-flirt").value = st.preferred_flirt_level; $("st-emoji").value = st.emoji_frequency;
+  $("st-humor").value = (st.humor_style || []).join(", "); $("st-samples").value = (st.sample_messages || []).join("\n");
+  $("st-avoids").innerHTML = '<span class="muted">Avoid:</span>' + AVOIDS.map(([k, l]) =>
+    `<label class="muted"><input type="checkbox" value="${k}" ${st.avoids.includes(k) ? "checked" : ""}> ${l}</label>`).join(" ");
+  renderLearned(r.learned);
+}
+
+async function saveStyle() {
+  const style = {
+    average_message_length: $("st-len").value, preferred_directness: +$("st-direct").value,
+    preferred_flirt_level: +$("st-flirt").value, emoji_frequency: +$("st-emoji").value,
+    question_frequency: 0.35, humor_style: $("st-humor").value.split(",").map(s => s.trim()).filter(Boolean),
+    avoids: [...document.querySelectorAll("#st-avoids input:checked")].map(i => i.value),
+    sample_messages: $("st-samples").value.split("\n").map(s => s.trim()).filter(Boolean),
+  };
+  await api("/api/style", { method: "PUT", body: JSON.stringify(style) });
+  toast("Style saved"); if (session) onSlide();
+}
+
+async function resetPrefs() { await api("/api/preferences", { method: "DELETE" }); loadStyle(); toast("Learned preferences reset"); }
+async function deleteSession() {
+  if (!session) return toast("Nothing to delete");
+  await api("/api/sessions/" + session, { method: "DELETE" }); session = null;
+  $("results").innerHTML = `<div class="panel empty">Conversation deleted.</div>`;
+}
+async function deleteAll() {
+  if (!confirm("Delete your style, learned preferences, feedback and all conversations?")) return;
+  await api("/api/me", { method: "DELETE" }); session = null; loadStyle();
+  $("results").innerHTML = `<div class="panel empty">All your data was deleted.</div>`;
+}
+
+async function uploadShot(input) {
+  const f = input.files[0]; if (!f) return;
+  $("shot-note").textContent = "Reading screenshot…";
+  const fd = new FormData(); fd.append("file", f);
+  try {
+    const res = await fetch("/api/parse-screenshot", { method: "POST", body: fd });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.detail || res.statusText);
+    if (body.messages?.length) {
+      $("conv").value = body.messages.map(m => (m.speaker === "user" ? "Me: " : "Them: ") + m.text).join("\n");
+      setMode("reply");
+    }
+    if (body.profile_text) { $("profile").value = body.profile_text; if (!body.messages?.length) setMode("opener"); }
+    $("shot-note").textContent = "Extracted - check it, then Coach me. (Image was not stored.)";
+  } catch (e) { $("shot-note").textContent = e.message; }
+  input.value = "";
+}
+
+async function init() {
+  buildSliders(); setMode("reply");
+  try {
+    health = await api("/api/health");
+    const b = health.backends;
+    $("badges").innerHTML = `<span class="badge">judge <b>${esc(b.judge)}</b></span><span class="badge">generator <b>${esc(b.generator)}</b></span><span class="badge">reasoning <b>${esc(b.reasoning)}</b></span>`;
+    if (!health.screenshots) { $("shot").disabled = true; $("shot-note").textContent = "Screenshot import needs ANTHROPIC_API_KEY - paste text for now."; }
+  } catch (_) {}
+  loadStyle();
+}
+init();
+</script>
+</body>
+</html>

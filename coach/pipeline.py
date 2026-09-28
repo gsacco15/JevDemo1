@@ -506,17 +506,21 @@ async def coach_events(req: CoachRequest, user_id: str):
     def ev(type_, **kw):
         return {"type": type_, "t": t.total(), **kw}
 
-    yield ev("start", backends=backends(), questions=QUESTION_META, n_state_questions=len(STATE_QUESTIONS))
+    yield ev("start", backends=backends(), questions=QUESTION_META, n_state_questions=len(STATE_QUESTIONS),
+             state_questions=[{"id": q.id, "kind": q.kind, "instructions": q.instructions} for q in STATE_QUESTIONS],
+             jev_concurrency=getattr(judge, "sem", None) and settings.jev_concurrency)
 
     # 1-2. understand the conversation, choose a move
     state, state_raw, n_state = await build_state(req.mode, messages, profile, style, req.platform)
     t.lap("state")
     yield ev("state", read=explain.conversation_read(state, "CONTINUE_TOPIC", req.match_pronoun, req.mode),
-             judgments=n_state, ms=t.stages["state"],
+             judgments=n_state, ms=t.stages["state"], details=state_raw,
              hooks=[h.model_dump() for h in state.hooks])
     strategy, alts, strategy_info = await choose_strategy(req.mode, messages, profile, state, style)
     t.lap("strategy")
     yield ev("strategy", strategy=strategy_info, alts=alts, ms=t.stages["strategy"],
+             batches=[b[0] for b in _batch_plan(strategy, alts, req.num_candidates or settings.num_candidates)]
+             if settings.use_claude else ["templates"],
              read=explain.conversation_read(state, strategy, req.match_pronoun, req.mode))
 
     # 3-4. generate in parallel batches; judge each candidate as soon as it exists

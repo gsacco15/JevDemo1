@@ -130,3 +130,10 @@ def test_change_topic_is_not_punished_for_asking_a_question():
     d = ranking.desired_state(st, "CHANGE_TOPIC", __import__("coach.schemas", fromlist=["StyleProfile"]).StyleProfile(), Sliders(), {})
     ranking.score_candidate(c, st, "CHANGE_TOPIC", [], d, ranking.stage_weights(st.stage, {}))
     assert "question_overload" not in c.penalties
+
+
+def test_double_text_recommends_waiting():
+    conv = TEASE_CONV + "\nMe: Ok\nMe: i don't think you could even try"
+    r = run(pipeline.coach(CoachRequest(conversation_text=conv, match_pronoun="she"), "t9"))
+    assert r["strategy"]["chosen"] == "WAIT"
+    assert r["strategy"]["trailing_user"] == 2

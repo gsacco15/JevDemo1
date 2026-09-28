@@ -218,8 +218,9 @@ async def choose_strategy(mode: str, messages, profile, state: ConversationState
             break
         trailing_user += 1
     if trailing_user >= 2:
-        probs["WAIT"] = probs.get("WAIT", 0) + 0.5
-        probs["PULL_BACK"] = probs.get("PULL_BACK", 0) + 0.3
+        # already double-texted: another message almost never helps
+        probs["WAIT"] = probs.get("WAIT", 0) + 0.9
+        probs["PULL_BACK"] = probs.get("PULL_BACK", 0) + 0.2
         rules.append("user already double-texted -> favour WAIT / PULL_BACK")
     if mode == "opener":
         for k in list(probs):
@@ -230,7 +231,7 @@ async def choose_strategy(mode: str, messages, profile, state: ConversationState
     ranked = sorted(probs, key=lambda k: -probs[k])
     chosen = ranked[0]
     # (3) similar moves pool their votes, so "ask for date" + "suggest a plan" can't lose by splitting
-    for fam in (("ASK_FOR_DATE", "SUGGEST_SPECIFIC_DATE"), ("FLIRT", "ESCALATE_FLIRT")):
+    for fam in (("WAIT", "PULL_BACK"), ("ASK_FOR_DATE", "SUGGEST_SPECIFIC_DATE"), ("FLIRT", "ESCALATE_FLIRT")):
         fam_p = sum(probs.get(k, 0) for k in fam)
         if chosen not in fam and fam_p > probs[chosen]:
             chosen = max(fam, key=lambda k: probs.get(k, 0))
@@ -243,7 +244,8 @@ async def choose_strategy(mode: str, messages, profile, state: ConversationState
     if mode == "reply" and (state.escalation_readiness > 0.4 or hot) and bold_alt not in alts and bold_alt != chosen and probs.get(bold_alt, 0) > 0:
         alts.append(bold_alt)
     info = {"chosen": chosen, "confidence": round(res.confidence, 3), "source": res.source,
-            "probs": {k: round(probs[k], 3) for k in ranked[:6]}, "rules_applied": rules, "alts": alts}
+            "probs": {k: round(probs[k], 3) for k in ranked[:6]}, "rules_applied": rules, "alts": alts,
+            "hold_prob": round(probs.get("WAIT", 0) + probs.get("PULL_BACK", 0), 3), "trailing_user": trailing_user}
     return chosen, alts, info
 
 

@@ -61,6 +61,10 @@ INSULT = ["ugly", "stupid", "dumb", "fat", "loser", "shut up", "annoying", "idio
 CHALLENGE = ["couldn't", "couldnt", "can't", "cant", "bet", "definitely", "prove", "doubt", "you wish",
              "yeah right", "sure you", "no way", "keep up", "beat", "win", "better than", "not a chance",
              "we'll see", "big talk", "lose", "never"]
+# explicit invitations only - "this weekend?" on its own is small talk, not a date ask
+DATE_ASKS = ["grab a drink", "grab drinks", "get a drink", "get drinks", "grab coffee", "get coffee", "grab dinner",
+             "take you", "meet up", "go on a date", "let's get", "let's go", "we should go", "we should grab",
+             "we should get", "want to meet", "wanna meet", "drinks thursday", "drinks friday", "drinks saturday"]
 INVITES = ["best spot", "i know a", "i know the best", "you have to try", "you'd love", "we should",
            "you should come", "take you to", "show you"]
 APPEARANCE = ["pretty", "beautiful", "gorgeous", "cute", "hot", "eyes", "smile", "hair", "outfit",

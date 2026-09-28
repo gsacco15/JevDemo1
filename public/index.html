@@ -766,8 +766,9 @@ function render(r, fromLive = false) {
       <td class="num">${pct(c.components.context_fit)}</td>
       <td class="muted">${esc(Object.entries(c.penalties).map(([k, v]) => `${human(k)} −${v}`).join(", "))}</td>
       <td class="muted">${c.escalated.length ? "↑ " + esc(c.escalated.join(", ")) : ""}</td></tr>`).join("");
+  const full = lastFull || s;  // after a slider re-rank, show the original search's cost, not the re-rank's
   const statItems = [[s.generated, "messages written"], [s.rejected, "hard-rejected"], [s.finalists, "finalists"], [judg, "Jev judgments"],
-    [s.pairwise_comparisons, "matchups"], [s.escalated_to_reasoning ?? "–", "re-checked by reasoning"], [(s.timings_ms.total / 1000).toFixed(1) + "s", "total time"]];
+    [s.pairwise_comparisons, "matchups"], [full.escalated_to_reasoning ?? "–", "re-checked by reasoning"], [(full.timings_ms.total / 1000).toFixed(1) + "s", "search time"]];
   const nQ = (r.questions || []).length;
 
   $("results").innerHTML = `

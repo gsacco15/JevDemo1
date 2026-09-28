@@ -171,7 +171,7 @@ async def build_state(mode: str, messages: list[Message], profile: str | None, s
         escalation_readiness=round(val("escalation_readiness", 0.3), 3),
         need_question=round(val("need_question"), 3),
         number_requested=H.hits(user_text, H.NUMBER) > 0,
-        date_requested=H.hits(user_text, H.DATE) > 0,
+        date_requested=H.hits(user_text, H.DATE_ASKS) > 0,
         number_appropriate=round(val("number_appropriate", 0.2), 3),
         date_appropriate=round(val("date_appropriate", 0.2), 3),
         conversation_momentum=res["momentum"].choice if "momentum" in res else "neutral",

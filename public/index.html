@@ -350,7 +350,7 @@ function render(r) {
     <details>
       <summary>Under the hood</summary>
       <div class="statgrid">${statItems.map(([n, l]) => `<div class="stat"><div class="n">${esc(n)}</div><div class="l">${esc(l)}</div></div>`).join("")}</div>
-      <div class="muted">Backends: judge <b>${esc(s.backends.judge)}</b> · generator <b>${esc(s.backends.generator)}</b> · reasoning <b>${esc(s.backends.reasoning)}</b>
+      <div class="muted">Backends: judge <b>${esc(s.backends.judge)}${s.jev_model ? " (" + esc(s.jev_model) + ")" : ""}</b>${s.jev_errors ? ` · <span class="error">${esc(s.jev_errors)} Jev errors</span>` : ""} · generator <b>${esc(s.backends.generator)}</b> · reasoning <b>${esc(s.backends.reasoning)}</b>
         · stage timings ${esc(Object.entries(s.timings_ms).map(([k,v]) => `${k} ${v}ms`).join(" · "))}</div>
       <h4>Strategy (Jev choice + rules) - ${esc(r.strategy.chosen)} @ confidence ${esc(r.strategy.confidence)}</h4>
       ${probs}
@@ -435,6 +435,7 @@ async function init() {
     health = await api("/api/health");
     const b = health.backends;
     $("badges").innerHTML = `<span class="badge">judge <b>${esc(b.judge)}</b></span><span class="badge">generator <b>${esc(b.generator)}</b></span><span class="badge">reasoning <b>${esc(b.reasoning)}</b></span>`;
+    if (b.judge === "jev") $("badges").innerHTML += `<a class="badge" href="/api/jev-check" target="_blank" rel="noopener">test Jev connection</a>`;
     if (!health.screenshots) { $("shot").disabled = true; $("shot-note").textContent = "Screenshot import needs ANTHROPIC_API_KEY - paste text for now."; }
   } catch (_) {}
   loadStyle();

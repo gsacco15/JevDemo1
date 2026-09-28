@@ -131,21 +131,23 @@ REASON_SCHEMA = {
 }
 
 
-async def resolve_low_confidence(context: str, asks: list[dict]) -> dict[str, float]:
-    """System Two. `asks` = [{id, candidate, question, kind}] -> {id: value in 0..1}."""
-    lines = "\n".join(
-        f"{a['id']} | {a['kind']} | candidate: {a['candidate']!r} | question: {a['question']}" for a in asks
-    )
+async def resolve_low_confidence(context: dict, asks: list[dict]) -> dict[str, float]:
+    """System Two. `asks` = [{id, candidate, question, kind, levels}] -> {id: value in 0..1}."""
+    lines = []
+    for a in asks:
+        scale = f" | levels (low->high): {a['levels']}" if a.get("levels") else ""
+        lines.append(f"{a['id']} | {a['kind']} | candidate_message: {a['candidate']!r} | question: {a['question']}{scale}")
+    ctx = {k: v for k, v in context.items() if k != "candidate_message"}
     prompt = f"""A fast judgment model was unsure about the following narrow judgments. Decide each carefully.
 
-CONTEXT:
-{context}
+STATE (JSON):
+{json.dumps(ctx, ensure_ascii=False, indent=1)}
 
 For kind=noul answer the probability (0..1) that the statement is true.
-For kind=score answer the level on a 0..1 scale (0 = none, 1 = very high).
+For kind=score answer the position on the listed levels as 0..1 (0 = first level, 1 = last level).
 
 JUDGMENTS:
-{lines}"""
+""" + "\n".join(lines)
     data = await _json_call(settings.reasoning_model, "You are a careful social-dynamics analyst.", prompt,
                             REASON_SCHEMA, max_tokens=4000, effort="medium")
     return {a["id"]: max(0.0, min(1.0, float(a["value"]))) for a in data.get("answers", [])}

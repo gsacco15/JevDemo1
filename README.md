@@ -40,19 +40,25 @@ The stand-ins exist so the whole pipeline can be exercised and inspected. They a
 
 Other settings: `NUM_CANDIDATES` (30), `CONF_AUTO` (0.90), `CONF_ESCALATE` (0.65), `RETENTION_HOURS` (24), `COACH_DB`, `COACH_FORCE_MOCK=1`.
 
-## ⚠️ Jev API mapping is a best guess
+## Jev integration
 
-TypeSafe's docs were not reachable while this was built. `TypeSafeJevJudge` in `coach/jev/client.py` sends:
+`TypeSafeJevJudge` (`coach/jev/client.py`) calls the documented System One API:
 
-```json
-POST {JEV_BASE_URL}/v1/judge
-{"model": "jev", "input": "<rendered app state>",
- "questions": [{"id": "flirt", "type": "score", "question": "...", "levels": ["none","low","medium","high","very_high"]},
-               {"id": "generic", "type": "noul", "question": "..."},
-               {"id": "strategy", "type": "choice", "question": "...", "options": ["TEASE", "..."]}]}
+```
+POST https://api.typesafe.ai/v1/systemone      Authorization: Bearer $TYPESAFE_API_KEY
+{"state": {...named fields...}, "model": "jev-latest",
+ "questions": {"flirt": {"type": "score", "instructions": "...", "criteria": ["...", "..."]},
+               "stage": {"type": "choice", "instructions": "...", "criteria": {"KEY": "description"}},
+               "generic": {"type": "noul", "instructions": "..."}}}
 ```
 
-and expects `answers: [{id, probabilities | probability | score, confidence}]`. To match the real API, change only `_request_body` and `_parse_answer`. If a call fails, it falls back to the heuristic for that item, so a demo keeps working.
+- All questions for one candidate go in **one request**, and the 30 candidates run in parallel.
+- Score answers (a level index) are normalised to 0..1. Choice and Score answers carry `confidence`. Noul answers have no confidence field, so "unsure" for them means a probability near 0.5.
+- If a call fails, that item falls back to the local stand-in, **and the UI shows a red banner with the error**. Failures are never silent.
+- **`GET /api/jev-check`** makes one tiny real call and reports the model version, latency and any error. Use it to confirm a deploy is wired up.
+- Env vars: `TYPESAFE_API_KEY` (or `JEV_API_KEY`), `JEV_MODEL` (default `jev-latest`), `JEV_BASE_URL`, `JEV_CONCURRENCY`.
+
+All questions and criteria live in `coach/questions.py`. That's the file to review and edit together.
 
 ## Where things live
 

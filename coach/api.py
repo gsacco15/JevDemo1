@@ -33,6 +33,11 @@ def health():
             "retention_hours": settings.retention_hours, "screenshots": settings.use_claude}
 
 
+@app.get("/api/jev-check")
+async def jev_check():
+    return await pipeline.jev_check()
+
+
 @app.post("/api/coach")
 async def coach(req: CoachRequest, x_user_id: str | None = Header(None)):
     try:

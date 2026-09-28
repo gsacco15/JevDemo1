@@ -40,6 +40,22 @@ class Timer:
         return round((time.perf_counter() - self.t0) * 1000, 1)
 
 
+async def jev_check() -> dict:
+    """One tiny real call so you can confirm Jev is wired up (see /api/jev-check)."""
+    from .jev.types import noul as _noul
+    if judge.name != "jev":
+        return {"ok": False, "judge": judge.name, "reason": "No TYPESAFE_API_KEY (or JEV_API_KEY) set - using the local stand-in."}
+    q = _noul("urgent", "`message` conveys urgency.")
+    t0 = time.perf_counter()
+    before = judge.stats.errors
+    res = await judge.judge([EvalItem("check", {"message": "Please help ASAP, I'm losing sales!"}, {"kind": "candidate", "candidate": ""})], [q])
+    j = res["check"].get("urgent")
+    ok = judge.stats.errors == before and j is not None and j.source == "jev"
+    return {"ok": ok, "judge": "jev", "model": judge.stats.model_version, "latency_ms": round((time.perf_counter() - t0) * 1000, 1),
+            "answer_p_urgent": j.value if j else None, "error": None if ok else judge.stats.last_error,
+            "state_sent_as": "string" if getattr(judge, "_state_as_string", False) else "object"}
+
+
 def backends() -> dict:
     return {
         "judge": judge.name,
@@ -60,23 +76,22 @@ def state_summary(state: ConversationState) -> dict:
     return state.model_dump(exclude={"hooks", "platform"})
 
 
+ROLES = {"user": "the person we are helping write their next message", "match": "the person they matched with"}
+
+
 def render_context(mode: str, messages: list[Message], profile: str | None, state: ConversationState | None,
-                   style: StyleProfile | None, strategy: str | None = None) -> str:
-    parts = [f"MODE: {mode}"]
-    if profile:
-        parts.append(f"MATCH PROFILE:\n{profile}")
-    if messages:
-        parts.append(f"CONVERSATION:\n{render_conversation(messages[-16:])}")
+                   style: StyleProfile | None, strategy: str | None = None) -> dict:
+    """The state object Jev sees. Questions in questions.py refer to these field names."""
+    ctx: dict = {"app": "dating app (Hinge)", "roles": ROLES, "mode": mode,
+                 "conversation": _msgs_dicts(messages[-20:]), "match_profile": profile}
     if state:
-        s = state_summary(state)
-        parts.append("STATE: " + ", ".join(f"{k}={v}" for k, v in s.items() if k not in ("last_match_message",)))
+        ctx["conversation_state"] = {k: v for k, v in state_summary(state).items() if k != "last_match_message"}
     if strategy:
-        parts.append(f"CHOSEN MOVE: {strategy}")
+        ctx["chosen_move"] = strategy
     if style:
-        parts.append(f"USER STYLE: {style.model_dump_json(exclude={'sample_messages'})}")
-        if style.sample_messages:
-            parts.append("USER'S OWN PAST MESSAGES:\n" + "\n".join(f"- {m}" for m in style.sample_messages[:6]))
-    return "\n\n".join(parts)
+        ctx["user_style"] = style.model_dump(exclude={"sample_messages"}) | {
+            "example_messages_the_user_sent": style.sample_messages[:8]}
+    return ctx
 
 
 # ---------------------------------------------------------------------------
@@ -98,7 +113,7 @@ async def extract_hooks(profile: str, context: str) -> tuple[list[Hook], int]:
     pieces = split_profile(profile)
     if not pieces:
         return [], 0
-    items = [EvalItem(key=f"h{i}", text=f"{context}\n\nPROFILE DETAIL: {t}", data={"kind": "hook", "hook_text": t})
+    items = [EvalItem(key=f"h{i}", state=context | {"profile_detail": t}, data={"kind": "hook", "hook_text": t})
              for i, (_, t) in enumerate(pieces)]
     res = await judge.judge(items, [HOOK_QUESTION, HOOK_APPEARANCE])
     hooks = []
@@ -257,7 +272,7 @@ async def judge_candidates(cands: list[Candidate], mode, messages, profile, stat
     hook = state.hooks[0].text if mode == "opener" and state.hooks else None
     base = {"kind": "candidate", "messages": _msgs_dicts(messages), "profile": profile, "last_match": state.last_match_message,
             "state": state_summary(state), "style": style.model_dump(), "strategy": strategy, "hook": hook}
-    items = [EvalItem(c.id, f"{ctx}\n\nCANDIDATE MESSAGE: {c.text}", base | {"candidate": c.text}) for c in cands]
+    items = [EvalItem(c.id, ctx | {"candidate_message": c.text}, base | {"candidate": c.text}) for c in cands]
     res = await judge.judge(items, CANDIDATE_QUESTIONS)
     n = 0
     for c in cands:
@@ -268,14 +283,18 @@ async def judge_candidates(cands: list[Candidate], mode, messages, profile, stat
     return n
 
 
-async def escalate(cands: list[Candidate], context: str) -> tuple[int, int]:
+async def escalate(cands: list[Candidate], context: dict) -> tuple[int, int]:
     """System Two: re-ask low-confidence judgments on contenders. Returns (low_conf_count, escalated_count)."""
     asks = []
     for c in cands:
         for qid, j in c.judgments.items():
-            if j.confidence < settings.conf_escalate and qid in REASONING_DIMS:
-                asks.append({"id": f"{c.id}:{qid}", "candidate": c.text, "question": REASONING_DIMS[qid].prompt,
-                             "kind": j.kind})
+            q = REASONING_DIMS.get(qid)
+            if not q:
+                continue
+            unsure = (0.35 < j.value < 0.65) if j.kind == "noul" else j.confidence < settings.conf_escalate
+            if unsure:
+                asks.append({"id": f"{c.id}:{qid}", "candidate": c.text, "question": q.instructions,
+                             "levels": list(q.levels) if q.kind == "score" else None, "kind": j.kind})
     if not asks or not settings.use_claude:
         return len(asks), 0
     try:
@@ -298,11 +317,11 @@ async def escalate(cands: list[Candidate], context: str) -> tuple[int, int]:
 # 5. ranking
 # ---------------------------------------------------------------------------
 
-async def pairwise_probs(finalists: list[Candidate], context: str, use_judge: bool) -> dict[tuple[str, str], float]:
+async def pairwise_probs(finalists: list[Candidate], context: dict, use_judge: bool) -> dict[tuple[str, str], float]:
     pairs = [(a, b) for i, a in enumerate(finalists) for b in finalists[i + 1:]]
     if not pairs:
         return {}
-    items = [EvalItem(f"{a.id}|{b.id}", f"{context}\n\nA: {a.text}\nB: {b.text}",
+    items = [EvalItem(f"{a.id}|{b.id}", context | {"candidate_a": a.text, "candidate_b": b.text},
                       {"kind": "pairwise", "a_total": a.total, "b_total": b.total}) for a, b in pairs]
     res = await (judge if use_judge else _local).judge(items, [PAIRWISE_QUESTION])
     out = {}
@@ -365,6 +384,21 @@ def build_output(session_id, mode, state, strategy_info, desired, cands, finalis
     }
 
 
+def jev_report(cands: list[Candidate], errors_before: int) -> tuple[dict, list[str]]:
+    """Make Jev failures visible instead of silently using the stand-in."""
+    if judge.name != "jev":
+        return {}, []
+    fell_back = sum(1 for c in cands if any(j.source == "heuristic" for j in c.judgments.values()))
+    new_errors = judge.stats.errors - errors_before
+    info = {"jev_model": judge.stats.model_version, "jev_errors": new_errors, "jev_fallback_candidates": fell_back,
+            "jev_last_error": judge.stats.last_error if new_errors else None}
+    notes = []
+    if new_errors:
+        notes.append(f"Jev failed on {new_errors} request(s) ({fell_back}/{len(cands)} candidates used the local "
+                     f"stand-in). Last error: {judge.stats.last_error}")
+    return info, notes
+
+
 def _load_user(user_id: str) -> tuple[StyleProfile, dict]:
     style, prefs = store.get_user(user_id)
     return StyleProfile(**style) if style else StyleProfile(), prefs or personalization.empty()
@@ -392,6 +426,7 @@ async def coach(req: CoachRequest, user_id: str) -> dict:
     if req.mode == "opener" and not profile:
         raise CoachError("Opener mode needs profile text (prompts, captions, photo notes).")
     style, prefs = _load_user(user_id)
+    errors_before = judge.stats.errors
     t.lap("load")
 
     state, state_raw, n_state = await build_state(req.mode, messages, profile, style, req.platform)
@@ -434,8 +469,10 @@ async def coach(req: CoachRequest, user_id: str) -> dict:
         "timings_ms": t.stages | {"total": t.total()}, "backends": backends(), "state_judgments": state_raw,
         "judge_latency": judge.stats.snapshot(),
     }
+    jev_info, jev_notes = jev_report(cands, errors_before)
+    stats |= jev_info
     return build_output(session_id, req.mode, state, strategy_info, desired, cands, finalists, picks, stats,
-                        req.match_pronoun, [gen_note] if gen_note else [])
+                        req.match_pronoun, jev_notes + ([gen_note] if gen_note else []))
 
 
 def _restore(sess: dict):
@@ -456,7 +493,7 @@ async def rerank(session_id: str, sliders: Sliders, user_id: str) -> dict:
     strategy, alts = sess["strategy_info"]["chosen"], sess["alts"]
     desired = ranking.desired_state(state, strategy, style, sliders, prefs)
     weights = ranking.stage_weights(state.stage, prefs, sliders)
-    alive, finalists, picks, n_pairs = await rank(cands, state, strategy, alts, desired, weights, sess["mode"], "",
+    alive, finalists, picks, n_pairs = await rank(cands, state, strategy, alts, desired, weights, sess["mode"], {},
                                                   sliders, use_judge=False)
     sess["sliders"] = sliders.model_dump()
     store.save_session(session_id, user_id, sess | {"candidates": [c.model_dump() for c in cands]})
@@ -479,6 +516,7 @@ async def regenerate(session_id: str, sliders: Sliders, user_id: str) -> dict:
     raw, note = await generate(mode, messages, sess["profile"], state, strategy, alts, style, sliders,
                                max(12, settings.num_candidates // 2), sess["pronoun"], sess["platform"],
                                avoid=[c.text for c in cands])
+    errors_before = judge.stats.errors
     new = make_candidates(raw, start=len(cands) + 1000)
     t.lap("generate")
     n_new = await judge_candidates(new, mode, messages, sess["profile"], state, strategy, style)
@@ -494,8 +532,10 @@ async def regenerate(session_id: str, sliders: Sliders, user_id: str) -> dict:
     stats = {"generated": len(cands), "new_candidates": len(new), "rejected": len(cands) - len(alive),
              "finalists": len(finalists), "jev_judgments": n_new + n_pairs, "pairwise_comparisons": n_pairs,
              "timings_ms": t.stages | {"total": t.total()}, "backends": backends()}
+    jev_info, jev_notes = jev_report(new, errors_before)
+    stats |= jev_info
     return build_output(session_id, mode, state, sess["strategy_info"], desired, cands, finalists, picks, stats,
-                        sess["pronoun"], [note] if note else [])
+                        sess["pronoun"], jev_notes + ([note] if note else []))
 
 
 def feedback(session_id: str, candidate_id: str, kind: str, edited_text: str | None, user_id: str) -> dict:

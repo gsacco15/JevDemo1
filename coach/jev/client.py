@@ -1,4 +1,4 @@
-"""Judge clients: the real TypeSafe Jev API, and a local heuristic stand-in.
+"""Judge clients: the real TypeSafe System One API (Jev), and a local heuristic stand-in.
 
 Both implement the same interface:
 
@@ -8,6 +8,7 @@ so the rest of the app never knows which one it is talking to.
 """
 
 import asyncio
+import json
 import logging
 import time
 from dataclasses import dataclass, field
@@ -26,29 +27,30 @@ class JudgeStats:
     calls: int = 0
     judgments: int = 0
     errors: int = 0
+    last_error: str | None = None
+    model_version: str | None = None
+    input_tokens: int = 0
     latencies_ms: list[float] = field(default_factory=list)
 
     def snapshot(self) -> dict:
-        lat = sorted(self.latencies_ms)
+        lat = sorted(self.latencies_ms[-500:])
         p = lambda q: round(lat[min(len(lat) - 1, int(q * len(lat)))], 1) if lat else None  # noqa: E731
         return {"calls": self.calls, "judgments": self.judgments, "errors": self.errors,
-                "latency_p50_ms": p(0.5), "latency_p95_ms": p(0.95)}
+                "last_error": self.last_error, "model_version": self.model_version,
+                "input_tokens": self.input_tokens, "latency_p50_ms": p(0.5), "latency_p95_ms": p(0.95)}
 
 
-def score_from_distribution(levels: tuple[str, ...], probs: dict[str, float]) -> float:
-    n = len(levels)
-    if n <= 1:
-        return 0.0
-    return sum(probs.get(l, 0.0) * i for i, l in enumerate(levels)) / (n - 1)
+def score_to_unit(index: float, n_levels: int) -> float:
+    """Jev returns a Score as a (probability-weighted) level index; we use 0..1 internally."""
+    return max(0.0, min(1.0, index / max(1, n_levels - 1)))
 
 
-def distribution_around(levels: tuple[str, ...], value: float, sharpness: float = 6.0) -> dict[str, float]:
-    """Heuristic judge only: fabricate a level distribution centred on `value`."""
-    n = len(levels)
+def distribution_around(n: int, value: float, sharpness: float = 6.0) -> dict[str, float]:
+    """Heuristic judge only: fabricate a level distribution centred on `value` (0..1)."""
     centre = value * (n - 1)
     w = [pow(2.718, -sharpness * ((i - centre) / max(1, n - 1)) ** 2 * 4) for i in range(n)]
     z = sum(w)
-    return {l: wi / z for l, wi in zip(levels, w)}
+    return {str(i): wi / z for i, wi in enumerate(w)}
 
 
 class HeuristicJudge:
@@ -72,7 +74,6 @@ class HeuristicJudge:
     def _judge_item(self, item: EvalItem, questions: list[Question]) -> dict[str, Judgment]:
         d = item.data
         kind = d.get("kind")
-        res: dict[str, Judgment] = {}
         if kind == "state":
             raw = H.state_judgments(d)
         elif kind == "strategy":
@@ -80,12 +81,13 @@ class HeuristicJudge:
             raw = {"strategy": (probs, conf)}
         elif kind == "hook":
             v, conf, appearance = H.hook_strength(d["hook_text"])
-            raw = {"hook_strength": (v, conf), "hook_is_appearance": (0.9 if appearance else 0.1, 0.8)}
+            raw = {"hook_strength": (v, conf), "hook_is_appearance": (0.9 if appearance else 0.1, 1.0)}
         elif kind == "pairwise":
             raw = {"pairwise": H.pairwise(d["a_total"], d["b_total"])}
         else:
             raw = {q.id: H.CANDIDATE_FNS[q.id](d) for q in questions if q.id in H.CANDIDATE_FNS}
 
+        res: dict[str, Judgment] = {}
         for q in questions:
             if q.id not in raw:
                 continue
@@ -98,81 +100,87 @@ class HeuristicJudge:
             elif q.kind == "score":
                 v = float(val)
                 res[q.id] = Judgment(question_id=q.id, kind="score", value=round(v, 4),
-                                     probs=distribution_around(q.levels, v), confidence=conf, source="heuristic")
+                                     probs=distribution_around(len(q.levels), v), confidence=conf, source="heuristic")
             else:
                 res[q.id] = Judgment(question_id=q.id, kind="noul", value=round(float(val), 4),
-                                     confidence=conf, source="heuristic")
+                                     confidence=1.0, source="heuristic")
         return res
 
 
 class TypeSafeJevJudge:
-    """HTTP client for TypeSafe's Jev.
+    """Client for TypeSafe's System One API.
 
-    NOTE: the request/response mapping below is our best guess from public write-ups
-    (Choice / Score / Noul questions, per-option probabilities, 0..1 confidence).
-    Confirm against the official API reference and adjust `_request_body` /
-    `_parse_answer` - nothing else in the app needs to change.
-    If a call fails, that item falls back to the heuristic judge so a demo never dies.
+        POST {base}/v1/systemone
+        {"state": ..., "model": "jev-latest", "questions": {id: {type, instructions, criteria}}}
+     -> {"model": "jev-x.y.z", "answers": {id: {...}}, "usage": {...}}
+
+    All questions for one item go in one request (they run in parallel server-side).
+    If a request fails, that item falls back to the heuristic judge and the error is
+    recorded in `stats.last_error` so the UI can show it - failures are never silent.
     """
 
     name = "jev"
 
-    def __init__(self, api_key: str, base_url: str, model: str = "jev", concurrency: int = 16):
+    def __init__(self, api_key: str, base_url: str, model: str = "jev-latest", concurrency: int = 16):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.sem = asyncio.Semaphore(concurrency)
         self.stats = JudgeStats()
         self.fallback = HeuristicJudge()
-        self._client = httpx.AsyncClient(timeout=10.0)
+        self._client = httpx.AsyncClient(timeout=20.0)
+        self._state_as_string = False  # flipped if the API rejects object state
 
-    def _request_body(self, item: EvalItem, questions: list[Question]) -> dict:
-        qs = []
-        for q in questions:
-            spec = {"id": q.id, "type": q.kind, "question": q.prompt}
-            if q.kind == "choice":
-                spec["options"] = list(q.options)
-            elif q.kind == "score":
-                spec["levels"] = list(q.levels)
-            qs.append(spec)
-        return {"model": self.model, "input": item.text, "questions": qs}
+    def request_body(self, item: EvalItem, questions: list[Question]) -> dict:
+        state = json.dumps(item.state, ensure_ascii=False) if self._state_as_string else item.state
+        return {"state": state, "model": self.model, "questions": {q.id: q.to_api() for q in questions}}
 
-    def _parse_answer(self, q: Question, a: dict) -> Judgment:
-        conf = float(a.get("confidence", 0.0))
+    @staticmethod
+    def parse_answer(q: Question, a: dict) -> Judgment:
         if q.kind == "noul":
-            p = a.get("probability", a.get("p_true", a.get("value")))
-            return Judgment(question_id=q.id, kind="noul", value=float(p), confidence=conf or abs(float(p) - 0.5) * 2, source="jev")
-        probs = a.get("probabilities") or a.get("distribution") or {}
-        if isinstance(probs, list):  # [{"option": ..., "probability": ...}]
-            probs = {x.get("option") or x.get("level"): float(x["probability"]) for x in probs}
+            # Noul returns only P(yes); there is no separate confidence.
+            return Judgment(question_id=q.id, kind="noul", value=float(a["noul"]), confidence=1.0, source="jev")
+        probs = {str(k): float(v) for k, v in (a.get("probabilities") or {}).items()}
+        conf = float(a.get("confidence", 0.0))
         if q.kind == "choice":
             top = a.get("choice") or max(probs, key=probs.get)
             return Judgment(question_id=q.id, kind="choice", choice=top, value=probs.get(top, 0.0),
                             probs=probs, confidence=conf, source="jev")
-        value = a.get("score")
-        if value is None:
-            value = score_from_distribution(q.levels, probs)
-        return Judgment(question_id=q.id, kind="score", value=float(value), probs=probs, confidence=conf, source="jev")
+        return Judgment(question_id=q.id, kind="score", value=score_to_unit(float(a["score"]), len(q.levels)),
+                        probs=probs, confidence=conf, source="jev")
+
+    async def _post(self, item: EvalItem, questions: list[Question]) -> httpx.Response:
+        return await self._client.post(
+            f"{self.base_url}/v1/systemone",
+            headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+            json=self.request_body(item, questions),
+        )
 
     async def _one(self, item: EvalItem, questions: list[Question]) -> dict[str, Judgment]:
         async with self.sem:
             t0 = time.perf_counter()
             try:
-                r = await self._client.post(
-                    f"{self.base_url}/v1/judge",
-                    headers={"Authorization": f"Bearer {self.api_key}"},
-                    json=self._request_body(item, questions),
-                )
-                r.raise_for_status()
+                r = await self._post(item, questions)
+                if r.status_code in (400, 422) and not self._state_as_string:
+                    # Some deployments may only accept a string state; retry once that way.
+                    self._state_as_string = True
+                    r = await self._post(item, questions)
+                if r.status_code >= 400:
+                    raise httpx.HTTPStatusError(f"HTTP {r.status_code}: {r.text[:300]}", request=r.request, response=r)
                 body = r.json()
-                answers = body.get("answers") or body.get("results") or []
-                by_id = {a.get("id"): a for a in answers}
-                out = {q.id: self._parse_answer(q, by_id[q.id]) for q in questions if q.id in by_id}
+                answers = body.get("answers") or {}
+                self.stats.model_version = body.get("model", self.stats.model_version)
+                self.stats.input_tokens += int((body.get("usage") or {}).get("input_tokens", 0))
+                out = {q.id: self.parse_answer(q, answers[q.id]) for q in questions if q.id in answers}
+                missing = [q.id for q in questions if q.id not in answers]
+                if missing:
+                    log.warning("Jev omitted answers for %s", missing)
                 self.stats.judgments += len(out)
                 return out
             except (httpx.HTTPError, KeyError, ValueError, TypeError) as e:
                 self.stats.errors += 1
-                log.warning("Jev call failed (%s); falling back to heuristic for %s", e, item.key)
+                self.stats.last_error = f"{type(e).__name__}: {e}"[:400]
+                log.warning("Jev call failed (%s); falling back to heuristic for %s", self.stats.last_error, item.key)
                 return (await self.fallback.judge([item], questions))[item.key]
             finally:
                 self.stats.calls += 1

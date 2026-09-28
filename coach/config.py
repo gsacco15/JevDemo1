@@ -1,7 +1,7 @@
 """Runtime configuration, read from environment variables.
 
 Everything has a working default so the app runs with zero keys:
-  - no JEV_API_KEY        -> local heuristic judge stands in for Jev
+  - no TYPESAFE_API_KEY   -> local heuristic judge stands in for Jev (JEV_API_KEY also accepted)
   - no ANTHROPIC_API_KEY  -> template generator stands in for the LLM
 """
 
@@ -19,9 +19,9 @@ def _env_float(name: str, default: float) -> float:
 @dataclass
 class Settings:
     # Jev / TypeSafe
-    jev_api_key: str | None = field(default_factory=lambda: os.environ.get("JEV_API_KEY"))
+    jev_api_key: str | None = field(default_factory=lambda: os.environ.get("TYPESAFE_API_KEY") or os.environ.get("JEV_API_KEY"))
     jev_base_url: str = field(default_factory=lambda: os.environ.get("JEV_BASE_URL", "https://api.typesafe.ai"))
-    jev_model: str = field(default_factory=lambda: os.environ.get("JEV_MODEL", "jev"))
+    jev_model: str = field(default_factory=lambda: os.environ.get("JEV_MODEL", "jev-latest"))
     jev_concurrency: int = field(default_factory=lambda: int(os.environ.get("JEV_CONCURRENCY", "16")))
 
     # Generative + reasoning model (Claude)

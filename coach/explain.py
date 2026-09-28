@@ -111,8 +111,10 @@ def why(c: Candidate, slot: str, strategy: str, desired: dict, pronoun: str, mat
         parts.append("goes for the number")
     elif v(c, "asks_date", 0.1) > 0.5:
         parts.append("moves things toward meeting up")
-    elif v(c, "escalation") < desired["escalation"] - 0.1 or slot == "CHILLER":
+    elif slot != "BOLDER" and (v(c, "escalation") < desired["escalation"] - 0.1 or slot == "CHILLER"):
         parts.append("keeps the escalation low-key")
+    elif slot == "BOLDER":
+        parts.append("pushes a little further than the top pick")
     if v(c, "style_fit") > 0.7 and len(parts) < 3:
         parts.append("sounds like you")
     if not parts:

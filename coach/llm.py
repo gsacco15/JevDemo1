@@ -230,3 +230,26 @@ async def structure_profile(text: str) -> dict:
 Ignore meta chatter from whoever pasted it ("here's this girl's profile", "lol"). Never invent anything."""
     return await _json_call(settings.generator_model, system, [{"type": "text", "text": text[:8000]}],
                             PROFILE_SCHEMA, max_tokens=3000, effort="low")
+
+
+async def profile_from_screenshots(images: list[tuple[bytes, str]], existing: str = "") -> dict:
+    """Several screenshots of ONE dating profile (scrolled, overlapping, any order) -> structured profile.
+    Anything already captured in `existing` is kept and merged. Images are only held in memory."""
+    content = [{"type": "image", "source": {"type": "base64", "media_type": mt,
+                                            "data": base64.standard_b64encode(data).decode()}} for data, mt in images]
+    note = f"\n\nAlready captured from earlier screenshots (keep all of it, merge new details in):\n{existing[:6000]}" \
+        if existing.strip() else ""
+    content.append({"type": "text", "text": f"""These {len(images)} screenshots are all from ONE person's dating profile
+(Hinge, Tinder, Bumble or similar), taken while scrolling, so they overlap and may be out of order.
+Capture everything on the profile exactly once:
+- name and age
+- basics, using these labels where they fit: Location, Hometown, Job, Education, Height, Dating intention,
+  Relationship type, Drinking, Smoking, Weed, Kids, Pets, Religion, Politics, Zodiac, Languages, Exercise,
+  Gender, Sexuality, Pronouns, Interests (comma-separated)
+- every prompt: its title and her answer word for word; a bio goes under the title "About me";
+  a voice prompt without visible text becomes answer "(voice prompt)"
+- every photo: one line on what she's doing, where, and notable objects, pets or places
+  (e.g. "holding a golden retriever at Zilker Park"). Include visible captions. Don't rate looks.
+Ignore app buttons, likes, comments, timestamps and ads. Never invent anything you can't see.{note}"""})
+    return await _json_call(settings.generator_model, "You transcribe dating profiles from screenshots into fields.",
+                            content, PROFILE_SCHEMA, max_tokens=4000, effort="low")

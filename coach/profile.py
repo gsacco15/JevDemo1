@@ -8,7 +8,7 @@ UI preview and the hook ranker share one parser.
 
 import re
 
-BASIC_KEYS = {"name", "age", "location", "job", "work", "job title", "education", "school", "height",
+BASIC_KEYS = {"distance", "name", "age", "location", "job", "work", "job title", "education", "school", "height",
               "dating intention", "dating intentions", "politics", "drinking", "drinks", "smoking", "smokes",
               "exercise", "hometown", "religion", "religious beliefs", "kids", "children", "family plans", "pets",
               "zodiac", "star sign", "languages", "language", "gender", "pronouns", "sexuality", "relationship type",
@@ -393,3 +393,19 @@ def hook_pieces(text: str, parsed: dict | None = None) -> list[tuple[str, str]]:
     photos = [("photo", f"Photo: {ph}") for ph in p["photos"]]
     basics = [("basic", f"{k}: {p['basics'][k]}") for k in HOOKABLE_BASICS if k in p["basics"]]
     return (prompts + other)[:12] + photos[:8] + basics[:3]
+
+
+def profile_to_text(p: dict) -> str:
+    """Structured profile -> clean text for the profile box. parse_profile() reads it back the same way."""
+    lines = []
+    head = ", ".join(x for x in (p.get("name"), p.get("age")) if x)
+    if head:
+        lines.append(head)
+    for k, v in p.get("basics", {}).items():
+        lines.append(v if k == v else f"{k}: {v}")
+    for title, answer in p.get("prompts", []):
+        lines += ["", f"{title or 'About me'}:", answer]
+    if p.get("photos"):
+        lines.append("")
+        lines += [f"Photo: {ph}" for ph in p["photos"]]
+    return "\n".join(lines).strip()

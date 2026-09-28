@@ -266,3 +266,31 @@ def test_profiles_from_other_apps_and_messy_notes():
     m = from_model({"name": "Ana", "age": "30", "basics": [{"label": "Job", "value": "Chef"}],
                     "prompts": [{"title": "", "answer": "I make pasta"}], "photos": ["surfing"]})
     assert m["basics"] == {"Job": "Chef"} and m["prompts"] == [["About me", "I make pasta"]]
+
+
+def test_profile_screenshots_merge_into_profile_text(monkeypatch):
+    from fastapi.testclient import TestClient
+    from coach import api, llm
+    from coach.config import settings
+    seen = {}
+
+    async def fake(images, existing=""):
+        seen["n"], seen["existing"] = len(images), existing
+        return {"name": "Maddie", "age": "29", "basics": [{"label": "Location", "value": "Austin, Texas"}],
+                "prompts": [{"title": "Typical Sunday", "answer": "Pilates and a patio"}],
+                "photos": ["holding a golden retriever at Zilker Park"]}
+    monkeypatch.setattr(llm, "profile_from_screenshots", fake)
+    monkeypatch.setattr(settings, "anthropic_api_key", "test")
+    monkeypatch.setattr(settings, "force_mock", False)
+    api._hits.clear()
+    with TestClient(api.app) as c:
+        files = [("files", (f"s{i}.jpg", b"\xff\xd8fake", "image/jpeg")) for i in range(3)]
+        r = c.post("/api/parse-profile-shots", files=files, data={"existing": "Has a dog"})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert seen == {"n": 3, "existing": "Has a dog"} and body["images"] == 3
+        assert body["profile_text"].startswith("Maddie, 29\nLocation: Austin, Texas")
+        assert "Photo: holding a golden retriever at Zilker Park" in body["profile_text"]
+        too_many = [("files", (f"s{i}.jpg", b"x", "image/jpeg")) for i in range(11)]
+        assert c.post("/api/parse-profile-shots", files=too_many).status_code == 400
+        assert c.post("/api/parse-profile-shots", files=[("files", ("a.txt", b"x", "text/plain"))]).status_code == 400

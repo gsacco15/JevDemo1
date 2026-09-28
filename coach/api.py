@@ -5,7 +5,7 @@ import time
 from collections import defaultdict, deque
 from pathlib import Path
 
-from fastapi import FastAPI, File, Header, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 import json
 
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -13,14 +13,15 @@ from pydantic import BaseModel
 
 from . import llm, personalization, pipeline, store
 from .config import settings
-from .profile import parse_profile
+from .profile import from_model, parse_profile, profile_to_text
 from .schemas import CoachRequest, FeedbackRequest, RerankRequest, StyleProfile
 
 app = FastAPI(title="Jev Dating Message Coach", version="0.1.0")
 STATIC = Path(__file__).resolve().parent.parent / "public"
 
 # endpoints that spend model credits
-EXPENSIVE = {"/api/coach", "/api/coach/stream", "/api/regenerate", "/api/parse-screenshot", "/api/jev-check"}
+EXPENSIVE = {"/api/coach", "/api/coach/stream", "/api/regenerate", "/api/parse-screenshot", "/api/parse-profile-shots",
+             "/api/jev-check"}
 OPEN = {"/api/health", "/api/parse-profile"}  # parse-profile is pure text rules, no model calls
 _hits: dict[str, deque] = defaultdict(deque)
 
@@ -147,6 +148,30 @@ async def parse_screenshot(file: UploadFile = File(...)):
     if len(data) > 8 * 1024 * 1024:
         raise HTTPException(400, "Image too large (max 8MB)")
     return await llm.parse_screenshot(data, media_type)
+
+
+MAX_PROFILE_SHOTS = 10
+
+
+@app.post("/api/parse-profile-shots")
+async def parse_profile_shots(files: list[UploadFile] = File(...), existing: str = Form("")):
+    """Several profile screenshots -> one merged profile as text. Images are read in memory and never stored."""
+    if not settings.use_claude:
+        raise HTTPException(400, "Reading screenshots needs ANTHROPIC_API_KEY (vision). Paste the text for now.")
+    if len(files) > MAX_PROFILE_SHOTS:
+        raise HTTPException(400, f"Up to {MAX_PROFILE_SHOTS} screenshots at a time")
+    images, total = [], 0
+    for f in files:
+        mt = f.content_type or "image/jpeg"
+        if mt not in ("image/png", "image/jpeg", "image/webp", "image/gif"):
+            raise HTTPException(400, f"Unsupported image type {mt}")
+        data = await f.read()
+        total += len(data)
+        images.append((data, mt))
+    if total > 20 * 1024 * 1024:
+        raise HTTPException(400, "Images too large in total (max 20MB)")
+    parsed = from_model(await llm.profile_from_screenshots(images, existing))
+    return {"profile_text": profile_to_text(parsed), "profile": parsed, "images": len(images)}
 
 
 @app.get("/api/style")

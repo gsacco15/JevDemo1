@@ -1,5 +1,6 @@
 """The orchestrator: understand state -> choose strategy -> search many messages -> judge -> rank -> top 3."""
 
+import asyncio
 import logging
 import re
 import time
@@ -11,7 +12,7 @@ from .config import settings
 from .jev import EvalItem, HeuristicJudge, make_judge
 from .jev import heuristics as H
 from .parsing import parse_conversation, render_conversation
-from .questions import (CANDIDATE_QUESTIONS, HOOK_APPEARANCE, HOOK_QUESTION, PAIRWISE_QUESTION,
+from .questions import (RISK_DIMS, CANDIDATE_QUESTIONS, HOOK_APPEARANCE, HOOK_QUESTION, PAIRWISE_QUESTION,
                         REASONING_DIMS, STATE_QUESTIONS, STRATEGY_QUESTION)
 from .schemas import (Candidate, CoachRequest, ConversationState, Hook, Message, Sliders, StyleProfile)
 
@@ -234,9 +235,8 @@ async def choose_strategy(mode: str, messages, profile, state: ConversationState
 # 3. generation
 # ---------------------------------------------------------------------------
 
-async def generate(mode, messages, profile, state, strategy, alts, style, sliders, n, pronoun, platform,
-                   avoid: list[str]) -> tuple[list[dict], str | None]:
-    ctx = {
+def _gen_ctx(mode, messages, profile, state, strategy, alts, style, sliders, n, pronoun, platform, avoid) -> dict:
+    return {
         "mode": mode, "platform": platform, "pronoun": pronoun, "profile": profile,
         "conversation": render_conversation(messages) if messages else "",
         "state_summary": {k: v for k, v in state_summary(state).items() if k != "last_match_message"},
@@ -244,13 +244,49 @@ async def generate(mode, messages, profile, state, strategy, alts, style, slider
         "sliders": sliders.model_dump(), "n": n, "hooks": [h.model_dump() for h in state.hooks],
         "last_match": state.last_match_message, "avoid_texts": avoid,
     }
-    if settings.use_claude:
+
+
+def _batch_plan(strategy: str, alts: list[str], n: int) -> list[tuple[str, str, int]]:
+    """Split generation into parallel batches, each exploring a different region of message space."""
+    per = max(4, -(-n // 3))
+    alt = ", ".join(alts) or "other moves that could work"
+    return [
+        ("balanced", f"the recommended move ({strategy}) done well, balanced boldness", per),
+        ("bold", f"bolder options: more confident or forward takes on {strategy}, plus {alt}", per),
+        ("chill", f"lower-risk options: relaxed, short, easy to reply to; {strategy} or {alt}", n - 2 * per if n - 2 * per >= 4 else per),
+    ]
+
+
+async def generate_batches(mode, messages, profile, state, strategy, alts, style, sliders, n, pronoun, platform,
+                           avoid: list[str]):
+    """Yields (batch_name, raw_candidates, note) as each batch finishes."""
+    base = _gen_ctx(mode, messages, profile, state, strategy, alts, style, sliders, n, pronoun, platform, avoid)
+    if not settings.use_claude:
+        yield "templates", templates.generate(base, seed=len(avoid)), None
+        return
+
+    async def one(name, focus, k):
         try:
-            return await llm.generate_candidates(ctx), None
-        except Exception as e:  # noqa: BLE001 - fall back so the demo keeps working
-            log.exception("Claude generation failed")
-            return templates.generate(ctx), f"Claude generation failed ({type(e).__name__}); used templates"
-    return templates.generate(ctx, seed=len(avoid)), None
+            return name, await llm.generate_candidates(base | {"n": k, "focus": focus}), None
+        except Exception as e:  # noqa: BLE001 - keep the demo alive
+            log.exception("Claude generation batch %s failed", name)
+            return name, templates.generate(base | {"n": k}, seed=hash(name) % 1000), \
+                f"Claude batch '{name}' failed ({type(e).__name__}); used templates for it"
+
+    tasks = [asyncio.create_task(one(*b)) for b in _batch_plan(strategy, alts, n)]
+    for fut in asyncio.as_completed(tasks):
+        yield await fut
+
+
+async def generate(mode, messages, profile, state, strategy, alts, style, sliders, n, pronoun, platform,
+                   avoid: list[str]) -> tuple[list[dict], str | None]:
+    raw, notes = [], []
+    async for _, batch, note in generate_batches(mode, messages, profile, state, strategy, alts, style, sliders, n,
+                                                 pronoun, platform, avoid):
+        raw += batch
+        if note:
+            notes.append(note)
+    return raw, "; ".join(notes) or None
 
 
 def make_candidates(raw: list[dict], start: int = 0) -> list[Candidate]:
@@ -271,20 +307,25 @@ def make_candidates(raw: list[dict], start: int = 0) -> list[Candidate]:
 # 4. judging candidates
 # ---------------------------------------------------------------------------
 
-async def judge_candidates(cands: list[Candidate], mode, messages, profile, state, strategy, style) -> int:
+def candidate_items(cands: list[Candidate], mode, messages, profile, state, strategy, style) -> list[EvalItem]:
     ctx = render_context(mode, messages, profile, state, style, strategy)
     hook = state.hooks[0].text if mode == "opener" and state.hooks else None
     base = {"kind": "candidate", "messages": _msgs_dicts(messages), "profile": profile, "last_match": state.last_match_message,
             "state": state_summary(state), "style": style.model_dump(), "strategy": strategy, "hook": hook}
-    items = [EvalItem(c.id, ctx | {"candidate_message": c.text}, base | {"candidate": c.text}) for c in cands]
+    return [EvalItem(c.id, ctx | {"candidate_message": c.text}, base | {"candidate": c.text}) for c in cands]
+
+
+def apply_judgments(c: Candidate, res: dict) -> int:
+    c.judgments = res
+    for dim in ranking.TONE_DIMS:
+        c.features[dim] = round(res[dim].value, 3) if dim in res else 0.5
+    return len(res)
+
+
+async def judge_candidates(cands: list[Candidate], mode, messages, profile, state, strategy, style) -> int:
+    items = candidate_items(cands, mode, messages, profile, state, strategy, style)
     res = await judge.judge(items, CANDIDATE_QUESTIONS)
-    n = 0
-    for c in cands:
-        c.judgments = res[c.id]
-        n += len(res[c.id])
-        for dim in ranking.TONE_DIMS:
-            c.features[dim] = round(c.judgments[dim].value, 3) if dim in c.judgments else 0.5
-    return n
+    return sum(apply_judgments(c, res[c.id]) for c in cands)
 
 
 async def escalate(cands: list[Candidate], context: dict) -> tuple[int, int]:
@@ -357,14 +398,25 @@ async def rank(cands, state, strategy, alts, desired, weights, mode, context, sl
     ranking.apply_tournament(finalists, probs)
     finalists.sort(key=lambda c: -c.final)
     picks = ranking.select_diverse(finalists, reserve=[c for c in alive if c.total > 45], bold_slider=sliders.bold)
-    return alive, finalists, picks, len(probs)
+    return alive, finalists, picks, probs
 
 
 # ---------------------------------------------------------------------------
 # output
 # ---------------------------------------------------------------------------
 
-def build_output(session_id, mode, state, strategy_info, desired, cands, finalists, picks, stats, pronoun, notes):
+def tournament_view(finalists: list[Candidate], probs: dict) -> dict:
+    return {"ids": [c.id for c in finalists],
+            "p": {f"{a}|{b}": round(p, 3) for (a, b), p in probs.items()}}
+
+
+QUESTION_META = [{"id": q.id, "kind": q.kind, "risk": q.id in RISK_DIMS, "instructions": q.instructions}
+                 for q in CANDIDATE_QUESTIONS]
+
+
+def build_output(session_id, mode, state, strategy_info, desired, cands, finalists, picks, stats, pronoun, notes,
+                 probs: dict | None = None):
+    slot_of = {c.id: slot for slot, c in picks}
     top_fit = max((c.components.get("context_fit", 0) for c in finalists[:6]), default=0)
     return {
         "session_id": session_id,
@@ -384,9 +436,13 @@ def build_output(session_id, mode, state, strategy_info, desired, cands, finalis
              "components": c.components, "penalties": c.penalties, "boldness": round(ranking.boldness(c), 3),
              "scores": explain.display_scores(c),
              "low_confidence": [k for k, j in c.judgments.items() if j.confidence < settings.conf_escalate and j.source != "reasoning"],
-             "escalated": [k for k, j in c.judgments.items() if j.source == "reasoning"]}
+             "escalated": [k for k, j in c.judgments.items() if j.source == "reasoning"],
+             "judgments": {k: round(j.value, 3) for k, j in c.judgments.items()},
+             "finalist": c in finalists, "slot": slot_of.get(c.id)}
             for c in sorted(cands, key=lambda c: (c.rejected, -c.final))
         ],
+        "questions": QUESTION_META,
+        "tournament": tournament_view(finalists, probs or {}),
         "pool_exhausted": top_fit < 0.55,
         "stats": stats,
         "notes": notes,
@@ -426,6 +482,15 @@ def _session_payload(req_mode, messages, profile, pronoun, platform, state, stra
 # ---------------------------------------------------------------------------
 
 async def coach(req: CoachRequest, user_id: str) -> dict:
+    result = None
+    async for ev in coach_events(req, user_id):
+        if ev["type"] == "result":
+            result = ev["result"]
+    return result
+
+
+async def coach_events(req: CoachRequest, user_id: str):
+    """The whole search, as a stream of events the UI can animate. Last event: {"type": "result"}."""
     store.purge_expired()
     t = Timer()
     messages = req.messages or parse_conversation(req.conversation_text or "")
@@ -438,31 +503,85 @@ async def coach(req: CoachRequest, user_id: str) -> dict:
     errors_before = judge.stats.errors
     t.lap("load")
 
+    def ev(type_, **kw):
+        return {"type": type_, "t": t.total(), **kw}
+
+    yield ev("start", backends=backends(), questions=QUESTION_META, n_state_questions=len(STATE_QUESTIONS))
+
+    # 1-2. understand the conversation, choose a move
     state, state_raw, n_state = await build_state(req.mode, messages, profile, style, req.platform)
     t.lap("state")
+    yield ev("state", read=explain.conversation_read(state, "CONTINUE_TOPIC", req.match_pronoun, req.mode),
+             judgments=n_state, ms=t.stages["state"],
+             hooks=[h.model_dump() for h in state.hooks])
     strategy, alts, strategy_info = await choose_strategy(req.mode, messages, profile, state, style)
     t.lap("strategy")
+    yield ev("strategy", strategy=strategy_info, alts=alts, ms=t.stages["strategy"],
+             read=explain.conversation_read(state, strategy, req.match_pronoun, req.mode))
 
+    # 3-4. generate in parallel batches; judge each candidate as soon as it exists
     n = req.num_candidates or settings.num_candidates
-    raw, gen_note = await generate(req.mode, messages, profile, state, strategy, alts, style, req.sliders, n,
-                                   req.match_pronoun, req.platform, avoid=[])
-    cands = make_candidates(raw)
-    t.lap("generate")
+    cands: list[Candidate] = []
+    seen: set[str] = set()
+    queue: asyncio.Queue = asyncio.Queue()
+    gen_notes: list[str] = []
+    n_cand = 0
 
-    n_cand = await judge_candidates(cands, req.mode, messages, profile, state, strategy, style)
+    async def generate_all():
+        async for name, raw, note in generate_batches(req.mode, messages, profile, state, strategy, alts, style,
+                                                      req.sliders, n, req.match_pronoun, req.platform, avoid=[]):
+            await queue.put(("batch", name, raw, note))
+        await queue.put(("gen_done", None, None, None))
+
+    async def judge_one(c: Candidate, item: EvalItem):
+        res = await judge.judge([item], CANDIDATE_QUESTIONS)
+        await queue.put(("judged", c, res[item.key], None))
+
+    gen_task = asyncio.create_task(generate_all())
+    pending_judges, gen_done = 0, False
+    while not gen_done or pending_judges:
+        kind, a, b, c_ = await queue.get()
+        if kind == "batch":
+            fresh = [r for r in b if (r.get("text") or "").strip().lower() not in seen]
+            new = make_candidates(fresh, start=len(cands))
+            seen |= {c.text.lower() for c in new}
+            cands += new
+            if c_:
+                gen_notes.append(c_)
+            yield ev("candidates", batch=a, items=[{"id": c.id, "text": c.text, "strategy": c.intended_strategy,
+                                                   "boldness": c.intended_boldness} for c in new])
+            for c, item in zip(new, candidate_items(new, req.mode, messages, profile, state, strategy, style)):
+                pending_judges += 1
+                asyncio.create_task(judge_one(c, item))
+        elif kind == "gen_done":
+            gen_done = True
+            t.lap("generate+judge")
+        else:
+            pending_judges -= 1
+            n_cand += apply_judgments(a, b)
+            yield ev("judged", id=a.id, values={k: round(j.value, 3) for k, j in b.items()},
+                     source=next(iter(b.values())).source if b else None)
+    await gen_task
     t.lap("jev_candidates")
 
+    # 5-6. hard rejection + contextual scoring
     desired = ranking.desired_state(state, strategy, style, req.sliders, prefs)
     weights = ranking.stage_weights(state.stage, prefs, req.sliders)
     ctx = render_context(req.mode, messages, profile, state, style, strategy)
     score_pool(cands, state, strategy, alts, desired, weights, req.mode)
-    # System Two only looks at the candidates that could actually be shown
+    yield ev("scored", rows=[{"id": c.id, "total": c.total, "rejected": c.rejected, "reasons": c.reject_reasons}
+                             for c in cands])
+
+    # 7. System Two on the contenders
     contenders = sorted([c for c in cands if not c.rejected], key=lambda c: -c.total)[: settings.escalation_top]
     low_conf, escalated = await escalate(contenders, ctx)
     t.lap("escalation")
+    yield ev("escalation", checked=len(contenders), unsure=low_conf, escalated=escalated, ms=t.stages["escalation"])
 
-    alive, finalists, picks, n_pairs = await rank(cands, state, strategy, alts, desired, weights, req.mode, ctx, req.sliders)
+    # 8-9. tournament + diverse top 3
+    alive, finalists, picks, probs = await rank(cands, state, strategy, alts, desired, weights, req.mode, ctx, req.sliders)
     t.lap("rank_tournament")
+    yield ev("tournament", **tournament_view(finalists, probs))
 
     session_id = uuid.uuid4().hex[:12]
     store.save_session(session_id, user_id, _session_payload(req.mode, messages, profile, req.match_pronoun,
@@ -470,15 +589,16 @@ async def coach(req: CoachRequest, user_id: str) -> dict:
     t.lap("save")
     stats = {
         "generated": len(cands), "rejected": len(cands) - len(alive), "finalists": len(finalists),
-        "jev_judgments": n_state + n_cand + 1 + n_pairs, "candidate_judgments": n_cand,
-        "pairwise_comparisons": n_pairs, "low_confidence_judgments": low_conf, "escalated_to_reasoning": escalated,
+        "jev_judgments": n_state + n_cand + 1 + len(probs), "candidate_judgments": n_cand,
+        "pairwise_comparisons": len(probs), "low_confidence_judgments": low_conf, "escalated_to_reasoning": escalated,
         "timings_ms": t.stages | {"total": t.total()}, "backends": backends(), "state_judgments": state_raw,
         "judge_latency": judge.stats.snapshot(),
     }
     jev_info, jev_notes = jev_report(cands, errors_before)
     stats |= jev_info
-    return build_output(session_id, req.mode, state, strategy_info, desired, cands, finalists, picks, stats,
-                        req.match_pronoun, jev_notes + ([gen_note] if gen_note else []))
+    result = build_output(session_id, req.mode, state, strategy_info, desired, cands, finalists, picks, stats,
+                          req.match_pronoun, jev_notes + gen_notes, probs)
+    yield ev("result", result=result)
 
 
 def _restore(sess: dict):
@@ -499,15 +619,15 @@ async def rerank(session_id: str, sliders: Sliders, user_id: str) -> dict:
     strategy, alts = sess["strategy_info"]["chosen"], sess["alts"]
     desired = ranking.desired_state(state, strategy, style, sliders, prefs)
     weights = ranking.stage_weights(state.stage, prefs, sliders)
-    alive, finalists, picks, n_pairs = await rank(cands, state, strategy, alts, desired, weights, sess["mode"], {},
+    alive, finalists, picks, probs = await rank(cands, state, strategy, alts, desired, weights, sess["mode"], {},
                                                   sliders, use_judge=False)
     sess["sliders"] = sliders.model_dump()
     store.save_session(session_id, user_id, sess | {"candidates": [c.model_dump() for c in cands]})
     stats = {"generated": len(cands), "rejected": len(cands) - len(alive), "finalists": len(finalists),
-             "jev_judgments": 0, "pairwise_comparisons": n_pairs, "reranked_only": True,
+             "jev_judgments": 0, "pairwise_comparisons": len(probs), "reranked_only": True,
              "timings_ms": {"rerank": t.total(), "total": t.total()}, "backends": backends()}
     return build_output(session_id, sess["mode"], state, sess["strategy_info"], desired, cands, finalists, picks,
-                        stats, sess["pronoun"], [])
+                        stats, sess["pronoun"], [], probs)
 
 
 async def regenerate(session_id: str, sliders: Sliders, user_id: str) -> dict:
@@ -531,17 +651,17 @@ async def regenerate(session_id: str, sliders: Sliders, user_id: str) -> dict:
     desired = ranking.desired_state(state, strategy, style, sliders, prefs)
     weights = ranking.stage_weights(state.stage, prefs, sliders)
     ctx = render_context(mode, messages, sess["profile"], state, style, strategy)
-    alive, finalists, picks, n_pairs = await rank(cands, state, strategy, alts, desired, weights, mode, ctx, sliders)
+    alive, finalists, picks, probs = await rank(cands, state, strategy, alts, desired, weights, mode, ctx, sliders)
     t.lap("rank_tournament")
     store.save_session(session_id, user_id, sess | {"candidates": [c.model_dump() for c in cands],
                                                     "sliders": sliders.model_dump()})
     stats = {"generated": len(cands), "new_candidates": len(new), "rejected": len(cands) - len(alive),
-             "finalists": len(finalists), "jev_judgments": n_new + n_pairs, "pairwise_comparisons": n_pairs,
+             "finalists": len(finalists), "jev_judgments": n_new + len(probs), "pairwise_comparisons": len(probs),
              "timings_ms": t.stages | {"total": t.total()}, "backends": backends()}
     jev_info, jev_notes = jev_report(new, errors_before)
     stats |= jev_info
     return build_output(session_id, mode, state, sess["strategy_info"], desired, cands, finalists, picks, stats,
-                        sess["pronoun"], jev_notes + ([note] if note else []))
+                        sess["pronoun"], jev_notes + ([note] if note else []), probs)
 
 
 def feedback(session_id: str, candidate_id: str, kind: str, edited_text: str | None, user_id: str) -> dict:

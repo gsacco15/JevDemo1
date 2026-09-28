@@ -3,7 +3,9 @@
 from pathlib import Path
 
 from fastapi import FastAPI, File, Header, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+import json
+
+from fastapi.responses import FileResponse, StreamingResponse
 
 from . import llm, personalization, pipeline, store
 from .config import settings
@@ -44,6 +46,24 @@ async def coach(req: CoachRequest, x_user_id: str | None = Header(None)):
         return await pipeline.coach(req, uid(x_user_id))
     except pipeline.CoachError as e:
         _err(e)
+
+
+@app.post("/api/coach/stream")
+async def coach_stream(req: CoachRequest, x_user_id: str | None = Header(None)):
+    """Same as /api/coach, but streams every pipeline step as newline-delimited JSON."""
+    user = uid(x_user_id)
+
+    async def events():
+        try:
+            async for ev in pipeline.coach_events(req, user):
+                yield json.dumps(ev) + "\n"
+        except pipeline.CoachError as e:
+            yield json.dumps({"type": "error", "detail": str(e)}) + "\n"
+        except Exception as e:  # noqa: BLE001
+            yield json.dumps({"type": "error", "detail": f"{type(e).__name__}: {e}"}) + "\n"
+
+    return StreamingResponse(events(), media_type="application/x-ndjson",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.post("/api/rerank")

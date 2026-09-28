@@ -74,6 +74,13 @@ async def generate_candidates(ctx: dict) -> list[dict]:
     alt = ", ".join(ctx["alt_strategies"]) or "none"
     avoid = "\n".join(f"- {t}" for t in ctx.get("avoid_texts", [])[:40]) or "(none)"
     hooks = "\n".join(f"- [{h['strength']:.2f}] {h['text']}" for h in ctx.get("hooks", [])[:4]) or "(n/a)"
+    if ctx.get("focus"):
+        spread = (f"Write {ctx['n']} distinct candidate messages. THIS BATCH'S FOCUS: {ctx['focus']}\n"
+                  "(Other batches are covering the other angles in parallel, so stay on your focus.)")
+    else:
+        spread = (f"Write {ctx['n']} distinct candidate messages. Spread them out on purpose:\n"
+                  "- about 60% use the recommended move, the rest use the alternatives\n"
+                  "- roughly a third each chill / balanced / bold")
     prompt = f"""MODE: {ctx['mode']}  (reply = respond to the conversation; opener = first message on a profile)
 PLATFORM: {ctx['platform']}
 MATCH PRONOUN: {ctx['pronoun']}
@@ -103,9 +110,7 @@ TONE SLIDERS (0..1, 0.5 neutral): {json.dumps(ctx['sliders'])}
 DO NOT REPEAT OR CLOSELY PARAPHRASE THESE (already considered):
 {avoid}
 
-Write {ctx['n']} distinct candidate messages. Spread them out on purpose:
-- about 60% use the recommended move, the rest use the alternatives
-- roughly a third each chill / balanced / bold
+{spread}
 - vary length, structure and angle; do not write near-duplicates
 - each candidate is a single message the user could send as-is
 Tag each with the move it uses and its boldness."""

@@ -77,3 +77,23 @@ def test_distance_scoring_penalises_overshoot():
     fit_hot = c.components["context_fit"]
     ranking.score_candidate(c, st, "TEASE", [], cold, w)
     assert fit_hot > c.components["context_fit"] + 0.3
+
+
+def test_stream_endpoint_emits_every_stage():
+    import json as _json
+
+    from fastapi.testclient import TestClient
+
+    from coach.api import app
+
+    with TestClient(app) as client:
+        r = client.post("/api/coach/stream", json={"conversation_text": TEASE_CONV, "match_pronoun": "she"})
+        events = [_json.loads(line) for line in r.text.strip().splitlines()]
+    types = [e["type"] for e in events]
+    for t in ("start", "state", "strategy", "candidates", "judged", "scored", "escalation", "tournament", "result"):
+        assert t in types, t
+    assert types[-1] == "result"
+    result = events[-1]["result"]
+    assert result["questions"] and result["tournament"]["ids"]
+    assert all("judgments" in c for c in result["pool"])
+    assert types.count("judged") == result["stats"]["generated"]

@@ -90,6 +90,55 @@ pre { background: var(--chip); padding: 10px; border-radius: 8px; overflow: auto
   padding: 8px 14px; border-radius: 8px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; }
 .toast.on { opacity: 1; }
 .hidden { display: none !important; }
+
+/* ---- search visualisation ---- */
+:root { --cell: #ece8e1; --risk: #c9781a; --ok: #2f7d57; }
+@media (prefers-color-scheme: dark) { :root { --cell: #2b2a27; --risk: #e0953a; --ok: #58b287; } }
+.viz h3 { margin: 0 0 4px; font-size: 16px; }
+.viz .sub { color: var(--muted); font-size: 13px; margin-bottom: 12px; }
+.bignums { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin-bottom: 14px; }
+.bignum { background: var(--chip); border-radius: 10px; padding: 10px 12px; }
+.bignum .n { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+.bignum .l { font-size: 12px; color: var(--muted); }
+.steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 6px; margin-bottom: 14px; }
+.step { border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; font-size: 12px; color: var(--muted); position: relative; overflow: hidden; }
+.step b { display: block; color: var(--ink); font-size: 12.5px; }
+.step.run { border-color: var(--accent); color: var(--ink); }
+.step.run::after { content: ""; position: absolute; left: 0; bottom: 0; height: 2px; width: 40%; background: var(--accent); animation: slide 1.1s ease-in-out infinite; }
+.step.done { background: var(--chip); }
+.step.done b::before { content: "✓ "; color: var(--ok); }
+@keyframes slide { from { left: -40%; } to { left: 100%; } }
+.vizsec { margin-top: 16px; }
+.vizsec h4 { margin: 0 0 6px; font-size: 13px; }
+.vizsec .muted { margin-bottom: 8px; }
+.hmwrap { overflow-x: auto; padding-bottom: 4px; }
+.hm { display: inline-block; min-width: 100%; }
+.hm-row { display: grid; grid-template-columns: 230px repeat(var(--cols), 14px) 46px; gap: 2px; align-items: center; margin-bottom: 2px; }
+.hm-head { align-items: end; margin-bottom: 4px; }
+.hm-col { writing-mode: vertical-rl; transform: rotate(180deg); font-size: 10.5px; color: var(--muted); height: 92px; white-space: nowrap; overflow: hidden; }
+.hm-col.risk { color: var(--risk); }
+.hm-lbl { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 6px; }
+.hm-row i { display: block; height: 14px; border-radius: 3px; background: var(--cell); }
+.hm-row.fresh i { animation: pop .45s ease-out; }
+@keyframes pop { from { transform: scale(.2); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+.hm-score { font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+.hm-row.rej .hm-lbl { text-decoration: line-through; color: var(--muted); }
+.hm-row.rej i { opacity: .35; }
+.hm-row.picked .hm-lbl { font-weight: 700; }
+.slotag { display: inline-block; font-size: 9.5px; font-weight: 700; letter-spacing: .05em; padding: 1px 5px; border-radius: 4px; margin-right: 5px; background: var(--accent); color: var(--accent-ink); vertical-align: 1px; }
+.slotag.rej { background: var(--cell); color: var(--muted); }
+.tg-row { display: grid; grid-template-columns: 230px repeat(var(--n), 18px) 52px; gap: 2px; align-items: center; margin-bottom: 2px; }
+.tg-row i { display: block; height: 18px; border-radius: 3px; background: var(--cell); }
+.tg-row i.self { background: transparent; border: 1px dashed var(--line); }
+.funnel { display: flex; flex-direction: column; gap: 5px; }
+.fn { display: grid; grid-template-columns: 150px 1fr 40px; gap: 8px; align-items: center; font-size: 13px; }
+.fn .bar { height: 16px; background: var(--cell); border-radius: 4px; overflow: hidden; }
+.fn .bar i { display: block; height: 100%; background: var(--accent); border-radius: 4px; transition: width .6s ease; }
+.fn span:last-child { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin: 6px 0; align-items: center; }
+.legend .sw { display: inline-block; width: 44px; height: 8px; border-radius: 3px; vertical-align: middle; margin-right: 4px; }
+.feed { font-size: 12.5px; color: var(--muted); display: flex; flex-direction: column; gap: 3px; max-height: 110px; overflow: hidden; }
+.feed div { animation: pop .3s ease-out; }
 </style>
 </head>
 <body>
@@ -131,7 +180,9 @@ pre { background: var(--chip); padding: 10px; border-radius: 8px; overflow: auto
           <option value="she">a woman (she)</option><option value="he">a man (he)</option><option value="they" selected>not sure (they)</option>
         </select>
         <span style="flex:1"></span>
-        <button class="link" onclick="loadExample()">Load an example</button>
+        <select id="scenario" style="width:auto;max-width:190px" onchange="loadScenario(this.value)">
+          <option value="">Test conversations…</option>
+        </select>
       </div>
 
       <button class="primary" id="go" onclick="run()">Coach me</button>
@@ -227,25 +278,234 @@ function setMode(m) {
   $("profile-opt").textContent = m === "opener" ? "(required)" : "(optional)";
 }
 
-function loadExample() {
-  if (mode === "reply") {
-    $("conv").value = "Me: ok but I'm dangerously good at go karts\nHer: Lol you definitely couldn't keep up";
-    $("pronoun").value = "she";
-  } else {
-    $("profile").value = "I get way too competitive at Mario Kart.\nPhoto: hiking in Patagonia\nMy dog Biscuit is my whole personality\nPhoto: you're cute";
-    $("pronoun").value = "she";
+const SCENARIOS = [
+  ["Playful challenge", "reply", "Me: ok but I'm dangerously good at go karts\nHer: Lol you definitely couldn't keep up"],
+  ["She asked you something", "reply", "Me: your Patagonia pics are unreal\nHer: thank you!! it was the best trip of my life. do you travel much?"],
+  ["Dying conversation", "reply", "Me: what are you up to this weekend?\nHer: not much\nMe: nice, any plans?\nHer: nah"],
+  ["You double-texted", "reply", "Her: haha that's funny\nMe: so what do you do for work?\nMe: hello?"],
+  ["Ready to ask her out", "reply", "Me: ok ramen is my weakness\nHer: same!! I'm very serious about ramen\nMe: what's your go-to spot\nHer: there's this tiny place on 6th, best tonkotsu in the city\nMe: bold claim\nHer: I stand by it 😏 you'd agree if you tried it"],
+  ["Flirty", "reply", "Me: you seem like trouble\nHer: only the fun kind 😏\nMe: that's the worst kind\nHer: or the best kind. depends if you can handle it"],
+  ["She's making plans", "reply", "Me: we should grab a drink sometime\nHer: yes! I'm free thursday or saturday"],
+  ["Low-effort replies", "reply", "Me: how was your week\nHer: good\nMe: anything exciting?\nHer: not really lol"],
+  ["Awkward moment", "reply", "Me: you look like you'd be a terrible driver lol\nHer: wow ok"],
+  ["Dance chat", "reply", "Me: What kinda dance do you like\nHer: Salsa, two step, nothing fancy\nMe: salsa people always say nothing fancy and then spin three times\nHer: haha i swear its not the best but i try to break it down\nMe: tell me you're not one of those people who counts out loud\nHer: lol no but depends on the day"],
+  ["Opener: Mario Kart profile", "opener", "I get way too competitive at Mario Kart.\nPhoto: hiking in Patagonia\nMy dog Biscuit is my whole personality\nPhoto: at a wedding in a blue dress"],
+];
+
+function loadScenario(i) {
+  if (i === "") return;
+  const [, m, text] = SCENARIOS[+i];
+  setMode(m); $("pronoun").value = "she";
+  if (m === "opener") { $("profile").value = text; }
+  else { $("conv").value = text; $("profile").value = ""; }
+  $("scenario").value = "";
+}
+
+// ---------------------------------------------------------------------------
+// Live search visualisation
+// ---------------------------------------------------------------------------
+const STEPS = [["read", "Read the conversation"], ["move", "Choose the move"], ["write", "Claude writes candidates"],
+  ["judge", "Jev judges every one"], ["filter", "Reject bad ones"], ["score", "Score for this moment"],
+  ["tourney", "Head-to-head tournament"], ["pick", "Pick 3 different options"]];
+let L = null, drawQueued = false, tick = null, lastFull = null;
+
+function newLive() {
+  return { questions: [], cands: [], byId: {}, steps: {}, judgments: 0, pairs: 0, tournament: null, read: null,
+           strategy: null, scored: false, feed: [], fresh: null, t0: performance.now(), elapsed: 0, done: false };
+}
+
+function modelFromResult(r) {
+  const m = newLive();
+  m.questions = r.questions || []; m.done = true; m.scored = true;
+  for (const c of r.pool) {
+    const o = { id: c.id, text: c.text, strategy: c.intended_strategy, values: c.judgments || {}, total: c.total,
+                final: c.final, rejected: c.rejected, reasons: c.reject_reasons, slot: c.slot, finalist: c.finalist };
+    m.cands.push(o); m.byId[c.id] = o;
   }
+  m.tournament = r.tournament; m.pairs = r.stats.pairwise_comparisons;
+  m.judgments = r.stats.reranked_only && lastFull ? lastFull.jev_judgments : r.stats.jev_judgments;
+  if (!r.stats.reranked_only) lastFull = r.stats;
+  STEPS.forEach(([k]) => m.steps[k] = "done");
+  m.elapsed = (r.stats.timings_ms?.total || 0) / 1000;
+  return m;
+}
+
+const qLabel = id => id.replace(/_/g, " ");
+const cellColor = (v, risk) => `color-mix(in srgb, var(${risk ? "--risk" : "--accent"}) ${Math.round(Math.max(0, Math.min(1, v)) * 100)}%, var(--cell))`;
+const trunc = (t, n = 44) => t.length > n ? t.slice(0, n - 1) + "…" : t;
+const SLOT_TAG = { BEST: "BEST", BOLDER: "BOLDER", CHILLER: "CHILL", ALTERNATIVE: "ALT" };
+
+function pWin(t, a, b) {
+  if (t.p[a + "|" + b] != null) return t.p[a + "|" + b];
+  if (t.p[b + "|" + a] != null) return 1 - t.p[b + "|" + a];
+  return null;
+}
+
+function vizHTML(m) {
+  const Q = m.questions, nQ = Q.length;
+  const rejected = m.cands.filter(c => c.rejected).length;
+  const judgedCands = m.cands.filter(c => Object.keys(c.values || {}).length).length;
+  const nums = [
+    [m.cands.length, "messages written"], [m.judgments, "Jev judgments"],
+    [m.pairs, "head-to-head matchups"], [m.scored ? rejected : "…", "rejected"],
+    [(m.done ? m.elapsed : (performance.now() - m.t0) / 1000).toFixed(1) + "s", "elapsed"],
+  ];
+  const steps = STEPS.map(([k, label]) => `<div class="step ${m.steps[k] || ""}"><b>${label}</b>${stepNote(m, k)}</div>`).join("");
+
+  // rows: arrival order while judging, ranked once scored
+  let rows = [...m.cands];
+  if (m.scored) rows.sort((a, b) => (a.rejected - b.rejected) || ((b.final ?? b.total) - (a.final ?? a.total)));
+  const head = `<div class="hm-row hm-head"><div class="hm-lbl muted">candidate ↓ · question →</div>` +
+    Q.map(q => `<div class="hm-col ${q.risk ? "risk" : ""}" title="${esc(q.instructions)}">${esc(qLabel(q.id))}</div>`).join("") +
+    `<div class="hm-score">score</div></div>`;
+  const body = rows.map((c, i) => {
+    const cells = Q.map(q => {
+      const v = c.values?.[q.id];
+      return v == null ? `<i></i>` : `<i style="background:${cellColor(v, q.risk)}" title="${esc(qLabel(q.id))}: ${Math.round(v * 100)}"></i>`;
+    }).join("");
+    const tag = c.slot ? `<span class="slotag">${SLOT_TAG[c.slot]}</span>` : c.rejected ? `<span class="slotag rej">✕</span>` : "";
+    const score = m.scored ? (c.rejected ? "–" : (c.final ?? c.total).toFixed(0)) : "";
+    const title = c.text + (c.rejected ? `\n✕ ${c.reasons.join(", ")}` : "");
+    return `<div class="hm-row ${c.rejected ? "rej" : ""} ${c.slot ? "picked" : ""} ${m.fresh === c.id ? "fresh" : ""}">
+      <div class="hm-lbl" title="${esc(title)}">${m.scored && !c.rejected ? `<span class="muted">${i + 1}.</span> ` : ""}${tag}${esc(trunc(c.text))}</div>${cells}<div class="hm-score">${score}</div></div>`;
+  }).join("");
+
+  const legend = `<div class="legend"><span><span class="sw" style="background:linear-gradient(90deg,var(--cell),var(--accent))"></span>quality signal (higher = more)</span>
+    <span><span class="sw" style="background:linear-gradient(90deg,var(--cell),var(--risk))"></span>risk signal (higher = worse)</span>
+    <span>hover any cell or message for details</span></div>`;
+
+  let funnel = "";
+  if (m.scored) {
+    const total = m.cands.length || 1;
+    const fin = m.tournament ? m.tournament.ids.length : "…";
+    const shown = m.cands.filter(c => c.slot).length || (m.done ? 0 : "…");
+    const f = [["Messages written", total], ["Passed hard checks", total - rejected], ["Tournament finalists", fin], ["Shown to you", shown]];
+    funnel = `<div class="vizsec"><h4>The funnel</h4><div class="funnel">` + f.map(([l, n]) =>
+      `<div class="fn"><span>${l}</span><div class="bar"><i style="width:${typeof n === "number" ? Math.max(2, n / total * 100) : 0}%"></i></div><span>${n}</span></div>`).join("") + `</div></div>`;
+  }
+
+  let tourney = "";
+  if (m.tournament && m.tournament.ids.length) {
+    const ids = m.tournament.ids, n = ids.length;
+    const head2 = `<div class="tg-row"><div class="hm-lbl muted">row beats column?</div>${ids.map((_, j) => `<div class="hm-score" style="text-align:center">${j + 1}</div>`).join("")}<div class="hm-score">win %</div></div>`;
+    const rows2 = ids.map((a, i) => {
+      const c = m.byId[a] || { text: a };
+      let wins = 0, games = 0;
+      const cells = ids.map(b => {
+        if (a === b) return `<i class="self"></i>`;
+        const p = pWin(m.tournament, a, b);
+        if (p == null) return `<i></i>`;
+        wins += p; games++;
+        return `<i style="background:${cellColor(p, false)}" title="${esc(trunc(c.text, 60))}\nvs\n${esc(trunc((m.byId[b] || {}).text || b, 60))}\nP(win) = ${Math.round(p * 100)}%"></i>`;
+      }).join("");
+      const tag = c.slot ? `<span class="slotag">${SLOT_TAG[c.slot]}</span>` : "";
+      return `<div class="tg-row"><div class="hm-lbl" title="${esc(c.text)}"><span class="muted">${i + 1}.</span> ${tag}${esc(trunc(c.text, 40))}</div>${cells}<div class="hm-score">${games ? Math.round(wins / games * 100) + "%" : ""}</div></div>`;
+    }).join("");
+    tourney = `<div class="vizsec"><h4>Tournament: ${n} finalists, ${n * (n - 1) / 2} head-to-head matchups judged by Jev</h4>
+      <div class="muted">Each cell is Jev's probability that the row message beats the column message for this exact moment.</div>
+      <div class="hmwrap"><div class="hm" style="--n:${n}">${head2}${rows2}</div></div></div>`;
+  }
+
+  const feed = m.feed.length ? `<div class="vizsec"><div class="feed">${m.feed.slice(-5).reverse().map(f => `<div>${esc(f)}</div>`).join("")}</div></div>` : "";
+
+  return `<div class="bignums">${nums.map(([n, l]) => `<div class="bignum"><div class="n">${esc(n)}</div><div class="l">${esc(l)}</div></div>`).join("")}</div>
+    <div class="steps">${steps}</div>${m.done ? "" : feed}
+    <div class="vizsec"><h4>Every message × every question (${m.cands.length} × ${nQ} = ${m.cands.length * nQ} judgments${m.done ? "" : `, ${judgedCands * nQ} done`})</h4>
+      ${legend}<div class="hmwrap"><div class="hm" style="--cols:${nQ}">${head}${body}</div></div></div>
+    ${funnel}${tourney}`;
+}
+
+function stepNote(m, k) {
+  const n = { read: m.read ? m.read.vibe : "", move: m.strategy ? m.strategy.chosen.replace(/_/g, " ").toLowerCase() : "",
+    write: m.cands.length ? `${m.cands.length} messages` : "", judge: m.judgments ? `${m.judgments} judgments` : "",
+    filter: m.scored ? `${m.cands.filter(c => c.rejected).length} rejected` : "",
+    tourney: m.pairs ? `${m.pairs} matchups` : "" }[k];
+  return n ? `<span>${esc(n)}</span>` : "";
+}
+
+function readCard(rd) {
+  return `<div class="panel read">
+      <h2>${esc(rd.summary)}</h2>
+      <div class="chips" style="margin-bottom:8px">
+        <span class="chip">Vibe: <b>${esc(rd.vibe)}</b></span>
+        <span class="chip">Momentum: <b>${esc(rd.momentum)}</b></span>
+        <span class="chip">Recommended move: <b>${esc(rd.recommended_move)}</b></span>
+        <span class="chip">Escalation: <b>${esc(rd.escalation)}</b></span>
+      </div>
+      <div class="muted">${esc(rd.move_reason)}</div>
+    </div>`;
+}
+
+function drawLive() {
+  drawQueued = false;
+  if (!L || L.done) return;
+  const scroll = document.querySelector("#live .hmwrap")?.scrollLeft || 0;
+  $("results").innerHTML = (L.read && L.strategy ? readCard(L.read) : "") +
+    `<section class="panel viz" id="live"><h3>Searching for your best message…</h3>
+     <div class="sub">Claude writes many options in parallel, Jev judges every one on ${L.questions.length || 26} separate questions, then code filters, scores and runs a tournament.</div>
+     ${vizHTML(L)}</section>`;
+  const w = document.querySelector("#live .hmwrap"); if (w) w.scrollLeft = scroll;
+}
+const queueDraw = () => { if (!drawQueued) { drawQueued = true; requestAnimationFrame(drawLive); } };
+
+function onEvent(e) {
+  const m = L;
+  switch (e.type) {
+    case "start": m.questions = e.questions; m.steps.read = "run"; m.feed.push("Reading the conversation with Jev…"); break;
+    case "state": m.steps.read = "done"; m.steps.move = "run"; m.judgments += e.judgments; m.read = e.read;
+      m.feed.push(`Jev read the conversation: ${e.judgments} judgments in ${Math.round(e.ms)} ms`); break;
+    case "strategy": m.steps.move = "done"; m.steps.write = "run"; m.judgments += 1; m.read = e.read; m.strategy = e.strategy;
+      m.feed.push(`Move chosen: ${e.strategy.chosen} (also exploring ${e.alts.join(", ") || "nothing else"})`); break;
+    case "candidates":
+      for (const it of e.items) { const o = { ...it, values: {} }; m.cands.push(o); m.byId[o.id] = o; }
+      m.steps.judge = "run";
+      m.feed.push(`${e.batch === "templates" ? "Template generator" : `Claude (${e.batch} batch)`} delivered ${e.items.length} messages → sent to Jev`); break;
+    case "judged": {
+      const c = m.byId[e.id]; if (c) { c.values = e.values; m.fresh = e.id; }
+      m.judgments += Object.keys(e.values).length; break;
+    }
+    case "scored":
+      for (const r of e.rows) { const c = m.byId[r.id]; if (c) Object.assign(c, { total: r.total, rejected: r.rejected, reasons: r.reasons }); }
+      ["write", "judge", "filter", "score"].forEach(k => m.steps[k] = "done"); m.steps.tourney = "run"; m.scored = true; m.fresh = null;
+      m.feed.push(`${e.rows.filter(r => r.rejected).length} rejected by hard checks; the rest scored against the moment`); break;
+    case "escalation":
+      if (e.escalated) m.feed.push(`${e.escalated} uncertain judgments double-checked by the reasoning model`); break;
+    case "tournament":
+      m.tournament = e; m.pairs = Object.keys(e.p).length; m.judgments += m.pairs;
+      m.steps.tourney = "done"; m.steps.pick = "run"; break;
+    case "error": throw new Error(e.detail);
+    case "result":
+      m.done = true; clearInterval(tick); session = e.result.session_id; render(e.result); return;
+  }
+  queueDraw();
 }
 
 async function run() {
-  $("err").textContent = ""; $("go").disabled = true; $("go").textContent = "Searching candidates…";
+  $("err").textContent = ""; $("go").disabled = true; $("go").textContent = "Searching…";
+  L = newLive(); drawLive();
+  clearInterval(tick); tick = setInterval(queueDraw, 250);
   try {
     const body = { mode, conversation_text: $("conv").value, profile_text: $("profile").value,
                    sliders: sliders(), match_pronoun: $("pronoun").value };
-    const r = await api("/api/coach", { method: "POST", body: JSON.stringify(body) });
-    session = r.session_id; render(r);
-  } catch (e) { $("err").textContent = e.message; }
-  finally { $("go").disabled = false; $("go").textContent = "Coach me"; }
+    const res = await fetch("/api/coach/stream", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error(b.detail || res.statusText); }
+    const reader = res.body.getReader(), dec = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i;
+      while ((i = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, i); buf = buf.slice(i + 1);
+        if (line.trim()) onEvent(JSON.parse(line));
+      }
+    }
+    if (!L.done) throw new Error("The search stopped before finishing (server timeout?). Try again.");
+  } catch (e) {
+    $("err").textContent = e.message;
+    if (L && !L.done) { drawLive(); L.done = true; $("results").insertAdjacentHTML("afterbegin", `<div class="banner">${esc(e.message)}</div>`); }
+  } finally { clearInterval(tick); $("go").disabled = false; $("go").textContent = "Coach me"; }
 }
 
 function onSlide() {
@@ -332,21 +592,17 @@ function render(r) {
     </tr>`).join("");
 
   $("results").innerHTML = `
-    <div class="panel read">
-      <h2>${esc(rd.summary)}</h2>
-      <div class="chips" style="margin-bottom:8px">
-        <span class="chip">Vibe: <b>${esc(rd.vibe)}</b></span>
-        <span class="chip">Momentum: <b>${esc(rd.momentum)}</b></span>
-        <span class="chip">Recommended move: <b>${esc(rd.recommended_move)}</b></span>
-        <span class="chip">Escalation: <b>${esc(rd.escalation)}</b></span>
-      </div>
-      <div class="muted">${esc(rd.move_reason)}</div>
-    </div>
+    ${readCard(rd)}
     ${r.pool_exhausted ? `<div class="banner"><span>Nothing in the current pool fits these settings well.</span><button id="regen" onclick="regenerate()">Generate more like this</button></div>` : ""}
     ${r.notes.map(n => `<div class="banner">${esc(n)}</div>`).join("")}
     ${picks || `<div class="panel empty">Every candidate was rejected - try regenerating.</div>`}
     <div class="row"><button class="small" onclick="regenerate()">Search more candidates</button>
       <span class="muted">Session ${esc(r.session_id)}</span></div>
+    <section class="panel viz">
+      <h3>How we picked these</h3>
+      <div class="sub">${esc(s.generated)} messages written, ${esc(s.reranked_only && lastFull ? lastFull.jev_judgments : s.jev_judgments)} Jev judgments, ${esc(s.pairwise_comparisons)} head-to-head matchups${s.reranked_only ? " · re-ranked instantly for your sliders" : ""}.</div>
+      ${vizHTML(modelFromResult(r))}
+    </section>
     <details>
       <summary>Under the hood</summary>
       <div class="statgrid">${statItems.map(([n, l]) => `<div class="stat"><div class="n">${esc(n)}</div><div class="l">${esc(l)}</div></div>`).join("")}</div>
@@ -431,6 +687,7 @@ async function uploadShot(input) {
 
 async function init() {
   buildSliders(); setMode("reply");
+  $("scenario").innerHTML += SCENARIOS.map(([name], i) => `<option value="${i}">${esc(name)}</option>`).join("");
   try {
     health = await api("/api/health");
     const b = health.backends;
